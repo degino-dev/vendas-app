@@ -11,7 +11,6 @@ function PainelGerente() {
   const [clientes, setClientes] = useState([])
   const [orcamentos, setOrcamentos] = useState([])
   const [filtroCliente, setFiltroCliente] = useState('')
-
   const hoje = new Date()
   const [mes, setMes] = useState(hoje.getMonth() + 1)
   const [ano, setAno] = useState(hoje.getFullYear())
@@ -39,50 +38,87 @@ function PainelGerente() {
     return { inicio, fim }
   }, [])
 
-  // Dados por vendedor
+  // Verifica se uma data AAAA-MM-DD pertence ao mês/ano selecionado
+  const noMes = (data, alvoAno, alvoMes) => {
+    if (!data) return false
+    const [a, m] = String(data).split('-').map(Number)
+    return a === alvoAno && m === alvoMes
+  }
+
+  // Dados por vendedor (vendedores comuns; admin fica fora do ranking)
   const dadosVendedores = useMemo(() => {
-    return vendedores.map((v) => {
-      const vendasDoVendedor = vendas.filter((x) => x.vendedorId === v.id)
+    return vendedores
+      .filter((v) => !v.admin)
+      .map((v) => {
+        const vendasDoVendedor = vendas.filter((x) => x.vendedorId === v.id)
 
-      // Semana atual
-      const vendasSemana = vendasDoVendedor.filter((x) => {
-        const data = new Date(x.data)
-        return data >= semanaAtual.inicio && data <= semanaAtual.fim
+        // Semana atual
+        const vendasSemana = vendasDoVendedor.filter((x) => {
+          const data = new Date(x.data)
+          return data >= semanaAtual.inicio && data <= semanaAtual.fim
+        })
+        const totalSemana = vendasSemana.reduce(
+          (s, x) => s + Number(x.valorInsumos || 0) + Number(x.valorEquipamento || 0),
+          0
+        )
+
+        // Mês selecionado
+        const vendasMes = vendasDoVendedor.filter((x) => noMes(x.data, ano, mes))
+        const totalMes = vendasMes.reduce(
+          (s, x) => s + Number(x.valorInsumos || 0) + Number(x.valorEquipamento || 0),
+          0
+        )
+        const qtdVendasMes = vendasMes.length
+        const ticketMedioMes = qtdVendasMes > 0 ? totalMes / qtdVendasMes : 0
+
+        // Clientes
+        const clientesDoVendedor = clientes.filter((c) => c.vendedorId === v.id)
+        const qtdClientesTotal = clientesDoVendedor.length
+        const qtdClientesMes = clientesDoVendedor.filter((c) => noMes(c.dataCadastro, ano, mes)).length
+
+        const metaSemanal = Number(v.metaSemanal) || 25000
+        const metaMensal = Number(v.metaMensal) || 100000
+
+        const bateuSemana = totalSemana >= metaSemanal
+        const bateuMes = totalMes >= metaMensal
+
+        return {
+          ...v,
+          totalSemana,
+          totalMes,
+          qtdVendasMes,
+          ticketMedioMes,
+          qtdClientesTotal,
+          qtdClientesMes,
+          metaSemanal,
+          metaMensal,
+          bateuSemana,
+          bateuMes,
+          pctSemana: metaSemanal > 0 ? Math.min(100, (totalSemana / metaSemanal) * 100) : 0,
+          pctMes: metaMensal > 0 ? Math.min(100, (totalMes / metaMensal) * 100) : 0
+        }
       })
-      const totalSemana = vendasSemana.reduce(
-        (s, x) => s + Number(x.valorInsumos || 0) + Number(x.valorEquipamento || 0),
-        0
-      )
+      .sort((a, b) => b.totalMes - a.totalMes)
+  }, [vendedores, vendas, clientes, semanaAtual, mes, ano])
 
-      // Mês selecionado
-      const vendasMes = vendasDoVendedor.filter((x) => {
-        const [xA, xM] = x.data.split('-').map(Number)
-        return xA === ano && xM === mes
-      })
-      const totalMes = vendasMes.reduce(
-        (s, x) => s + Number(x.valorInsumos || 0) + Number(x.valorEquipamento || 0),
-        0
-      )
+  // --- KPIs do mês selecionado ---
+  const totalVendidoMes = dadosVendedores.reduce((s, v) => s + v.totalMes, 0)
+  const metaEquipe = dadosVendedores.reduce((s, v) => s + v.metaMensal, 0)
+  const pctEquipe = metaEquipe > 0 ? (totalVendidoMes / metaEquipe) * 100 : 0
 
-      const metaSemanal = Number(v.metaSemanal) || 25000
-      const metaMensal = Number(v.metaMensal) || 100000
+  const orcamentosMes = orcamentos.filter((o) => noMes(o.data, ano, mes))
+  const totalOrcamentosMes = orcamentosMes.reduce((s, o) => s + Number(o.valor || 0), 0)
+  const qtdOrcamentosMes = orcamentosMes.length
 
-      const bateuSemana = totalSemana >= metaSemanal
-      const bateuMes = totalMes >= metaMensal
+  const clientesNovosMes = clientes.filter((c) => noMes(c.dataCadastro, ano, mes)).length
+  const totalClientes = clientes.length
 
-      return {
-        ...v,
-        totalSemana,
-        totalMes,
-        metaSemanal,
-        metaMensal,
-        bateuSemana,
-        bateuMes,
-        pctSemana: metaSemanal > 0 ? Math.min(100, (totalSemana / metaSemanal) * 100) : 0,
-        pctMes: metaMensal > 0 ? Math.min(100, (totalMes / metaMensal) * 100) : 0
-      }
-    })
-  }, [vendedores, vendas, semanaAtual, mes, ano])
+  // Ranking de clientes cadastrados (novos no mês primeiro, desempate pelo total)
+  const rankingClientes = useMemo(() => {
+    return [...dadosVendedores].sort(
+      (a, b) => b.qtdClientesMes - a.qtdClientesMes || b.qtdClientesTotal - a.qtdClientesTotal
+    )
+  }, [dadosVendedores])
 
   // Orçamentos perdidos (todos), filtráveis por cliente
   const orcamentosFiltrados = useMemo(() => {
@@ -90,11 +126,8 @@ function PainelGerente() {
     return orcamentos.filter((o) => o.clienteId === filtroCliente)
   }, [orcamentos, filtroCliente])
 
-  const fmtValor = (v) =>
-    Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-
+  const fmtValor = (v) => Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
   const fmtPct = (p) => `${p.toFixed(1).replace('.', ',')}%`
-
   const fmtData = (d) => {
     if (!d) return ''
     const [a, m, dia] = d.split('-')
@@ -125,8 +158,39 @@ function PainelGerente() {
         </div>
       </div>
 
-      {/* Ranking de vendedores */}
-      <h3 className="top-titulo">📊 Desempenho dos Vendedores — {MESES[mes - 1]} de {ano}</h3>
+      {/* Cards de indicadores (KPIs) */}
+      <div className="kpi-grid">
+        <div className="kpi-card kpi-destaque">
+          <span className="kpi-rotulo">Total vendido no mês</span>
+          <div className="kpi-valor">{fmtValor(totalVendidoMes)}</div>
+          <div className="kpi-sub">Meta da equipe: {fmtValor(metaEquipe)}</div>
+          <div className="kpi-bar">
+            <div style={{ width: `${Math.min(100, pctEquipe)}%` }}></div>
+          </div>
+          <div className="kpi-sub"><strong>{fmtPct(pctEquipe)}</strong> da meta no mês</div>
+        </div>
+
+        <div className="kpi-card">
+          <span className="kpi-rotulo">Clientes cadastrados</span>
+          <div className="kpi-valor">{clientesNovosMes}</div>
+          <div className="kpi-sub">novos em {MESES[mes - 1]} · {totalClientes} no total</div>
+        </div>
+
+        <div className="kpi-card">
+          <span className="kpi-rotulo">Orçamentos perdidos</span>
+          <div className="kpi-valor">{fmtValor(totalOrcamentosMes)}</div>
+          <div className="kpi-sub">{qtdOrcamentosMes} orçamento(s) no mês</div>
+        </div>
+
+        <div className="kpi-card">
+          <span className="kpi-rotulo">Vendedores na meta</span>
+          <div className="kpi-valor">{dadosVendedores.filter((v) => v.bateuMes).length} / {dadosVendedores.length}</div>
+          <div className="kpi-sub">batendo a meta no mês selecionado</div>
+        </div>
+      </div>
+
+      {/* Ranking de vendas */}
+      <h3 className="top-titulo">📊 Ranking de Vendas — {MESES[mes - 1]} de {ano}</h3>
 
       {dadosVendedores.length === 0 ? (
         <p className="empty">Nenhum vendedor cadastrado.</p>
@@ -135,25 +199,28 @@ function PainelGerente() {
           <table className="tabela">
             <thead>
               <tr>
+                <th>#</th>
                 <th>Vendedor</th>
                 <th>Vendas Semana</th>
                 <th>% Semana</th>
                 <th>Vendas Mês</th>
                 <th>% Mês</th>
+                <th>Nº Vendas</th>
+                <th>Ticket Médio</th>
                 <th>Medalhas</th>
               </tr>
             </thead>
             <tbody>
-              {dadosVendedores.map((v) => (
+              {dadosVendedores.map((v, i) => (
                 <tr key={v.id}>
-                  <td><strong>{v.nome}</strong> {v.admin ? '👑' : ''}</td>
+                  <td className={`rank-pos ${i === 0 ? 'top1' : ''} ${i === 1 ? 'top2' : ''} ${i === 2 ? 'top3' : ''}`}>
+                    {i + 1}º
+                  </td>
+                  <td><strong>{v.nome}</strong></td>
                   <td>
                     <div className="mini-progress">
                       <div className="mini-bar">
-                        <div
-                          className="mini-fill"
-                          style={{ width: `${v.pctSemana}%` }}
-                        ></div>
+                        <div className="mini-fill" style={{ width: `${v.pctSemana}%` }}></div>
                       </div>
                       <span>{fmtValor(v.totalSemana)} / {fmtValor(v.metaSemanal)}</span>
                     </div>
@@ -162,20 +229,49 @@ function PainelGerente() {
                   <td>
                     <div className="mini-progress">
                       <div className="mini-bar">
-                        <div
-                          className="mini-fill"
-                          style={{ width: `${v.pctMes}%` }}
-                        ></div>
+                        <div className="mini-fill" style={{ width: `${v.pctMes}%` }}></div>
                       </div>
                       <span>{fmtValor(v.totalMes)} / {fmtValor(v.metaMensal)}</span>
                     </div>
                   </td>
                   <td className="rank-valor">{fmtPct(v.pctMes)}</td>
+                  <td className="mini-num">{v.qtdVendasMes}</td>
+                  <td className="mini-num">{fmtValor(v.ticketMedioMes)}</td>
                   <td className="medalhas">
                     {v.bateuSemana && <span title="Bateu a meta semanal">🥈</span>}
                     {v.bateuMes && <span title="Bateu a meta mensal">🥇</span>}
                     {!v.bateuSemana && !v.bateuMes && <span className="sem-medalha">—</span>}
                   </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Ranking de clientes cadastrados */}
+      <h3 className="top-titulo">👥 Clientes Cadastrados por Vendedor — {MESES[mes - 1]} de {ano}</h3>
+
+      {rankingClientes.length === 0 ? (
+        <p className="empty">Nenhum vendedor cadastrado.</p>
+      ) : (
+        <div className="tabela-wrap">
+          <table className="tabela">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Vendedor</th>
+                <th>Novos no mês</th>
+                <th>Total de clientes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rankingClientes.map((v, i) => (
+                <tr key={v.id}>
+                  <td className={`rank-pos ${i === 0 ? 'top1' : ''}`}>{i + 1}º</td>
+                  <td><strong>{v.nome}</strong></td>
+                  <td className="mini-num">{v.qtdClientesMes}</td>
+                  <td className="mini-num">{v.qtdClientesTotal}</td>
                 </tr>
               ))}
             </tbody>

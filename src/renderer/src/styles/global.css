@@ -1054,3 +1054,19 @@ input[type='number']::-webkit-inner-spin-button {
   font-size: 13px;
   color: #4b5563;
 }
+
+/* ===== Painel do Gerente — KPIs e ranking ===== */
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px; }
+.kpi-card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px 18px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06); }
+.kpi-card.kpi-destaque { background: linear-gradient(135deg, #1e3a8a, #2563eb); color: #ffffff; border: none; }
+.kpi-rotulo { font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; opacity: 0.75; }
+.kpi-valor { font-size: 26px; font-weight: 700; margin-top: 4px; }
+.kpi-sub { font-size: 13px; margin-top: 4px; opacity: 0.85; }
+.kpi-bar { height: 6px; background: #e2e8f0; border-radius: 4px; margin-top: 10px; overflow: hidden; }
+.kpi-bar > div { height: 100%; background: #4ade80; border-radius: 4px; }
+.kpi-card.kpi-destaque .kpi-bar { background: rgba(255, 255, 255, 0.25); }
+.rank-pos { font-weight: 700; color: #64748b; text-align: center; }
+.rank-pos.top1 { color: #d97706; font-size: 17px; }
+.rank-pos.top2 { color: #94a3b8; }
+.rank-pos.top3 { color: #b45309; }
+.mini-num { text-align: center; font-weight: 600; white-space: nowrap; }

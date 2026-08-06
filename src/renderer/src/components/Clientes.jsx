@@ -194,7 +194,8 @@ function Clientes({ usuario }) {
     }
   }
 
-async function deletar(id) {
+async function deletar(cliente) {
+  const id = typeof cliente === 'object' && cliente !== null ? cliente.id : cliente
   const confirmado = confirm('Excluir este cliente?')
   window.api.focarJanela()
   if (!confirmado) return
