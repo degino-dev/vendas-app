@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react'
-import { confirmar } from '../utils/confirmar'
 
 const formVazio = () => ({
   clienteId: '',
@@ -19,7 +18,6 @@ function Orcamentos({ usuario }) {
   const [filtroVendedor, setFiltroVendedor] = useState('todos')
   const [form, setForm] = useState(formVazio())
   const [mostrarSugestoes, setMostrarSugestoes] = useState(false)
-  const [indiceSugestao, setIndiceSugestao] = useState(0)
 
   useEffect(() => {
     const vendedorId = usuario.admin ? null : usuario.id
@@ -30,15 +28,15 @@ function Orcamentos({ usuario }) {
     }
   }, [usuario])
 
-  const clienteSelecionado = clientes.find((c) => c.id === form.clienteId)
   const clientePorId = (id) => clientes.find((c) => c.id === id)
   const vendedorPorId = (id) => vendedores.find((v) => v.id === id)
 
+  // Autocomplete de cliente
   const sugestoes = useMemo(() => {
     const busca = form.buscaCliente.trim().toLowerCase()
     if (!busca || form.clienteId) return []
     return [...clientes]
-      .sort((a, b) => a.codigo - b.codigo)
+      .sort((a, b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'))
       .filter((c) => {
         const nome = c.nome.toLowerCase()
         const cod = String(c.codigo)
@@ -47,10 +45,20 @@ function Orcamentos({ usuario }) {
       .slice(0, 8)
   }, [clientes, form.buscaCliente, form.clienteId])
 
+  // Filtra por vendedor
   const orcamentosFiltrados = useMemo(() => {
-    if (!usuario.admin || filtroVendedor === 'todos') return orcamentos
+    if (filtroVendedor === 'todos') return orcamentos
     return orcamentos.filter((o) => o.vendedorId === filtroVendedor)
-  }, [orcamentos, filtroVendedor, usuario.admin])
+  }, [orcamentos, filtroVendedor])
+
+  // NOVO SEMPRE NO TOPO: ordena por data desc; empates mantêm o mais recente primeiro
+  const ordenados = useMemo(() => {
+    return [...orcamentosFiltrados].sort((a, b) => {
+      const cmp = (b.data || '').localeCompare(a.data || '')
+      if (cmp !== 0) return cmp
+      return String(b.id || '').localeCompare(String(a.id || ''))
+    })
+  }, [orcamentosFiltrados])
 
   function escolherCliente(c) {
     setForm((f) => ({ ...f, clienteId: c.id, buscaCliente: '' }))
@@ -59,24 +67,6 @@ function Orcamentos({ usuario }) {
 
   function limparCliente() {
     setForm((f) => ({ ...f, clienteId: '', buscaCliente: '' }))
-  }
-
-  function onBuscaKey(e) {
-    if (e.key === 'Escape') {
-      setMostrarSugestoes(false)
-      return
-    }
-    if (!mostrarSugestoes || sugestoes.length === 0) return
-    if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      setIndiceSugestao((i) => (i + 1) % sugestoes.length)
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      setIndiceSugestao((i) => (i - 1 + sugestoes.length) % sugestoes.length)
-    } else if (e.key === 'Enter') {
-      e.preventDefault()
-      escolherCliente(sugestoes[indiceSugestao])
-    }
   }
 
   async function salvar(e) {
@@ -93,30 +83,37 @@ function Orcamentos({ usuario }) {
       data: form.data
     })
     if (res.ok) {
-      setOrcamentos((prev) => [...prev, res.orcamento])
+      // NOVO NO TOPO da lista
+      setOrcamentos((prev) => [res.orcamento, ...prev])
       setForm(formVazio())
+      setMostrarSugestoes(false)
     }
   }
 
-async function deletar(id) {
-  const confirmado = confirm('Excluir este orçamento?')
-  window.api.focarJanela()          // ← devolve o foco SEMPRE
-  if (!confirmado) return
-  await window.api.deletarOrcamento(id)
-  setOrcamentos((prev) => prev.filter((o) => o.id !== id))
-}
+  async function deletar(id) {
+    const confirmado = confirm('Excluir este orçamento?')
+    window.api.focarJanela()
+    if (!confirmado) return
+    await window.api.deletarOrcamento(id)
+    setOrcamentos((prev) => prev.filter((o) => o.id !== id))
+  }
 
+  // Formatação de valor SEMPRE completa (com 2 casas decimais)
   const fmtValor = (v) =>
-    Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+    Number(v || 0).toLocaleString('pt-BR', {
+      style: 'currency',
+      currency: 'BRL',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    })
 
   const fmtData = (d) => {
     if (!d) return ''
     const [ano, mes, dia] = d.split('-')
-    return `${dia}/${mes}/${ano}`   // ← CORRIGIDO: crases no lugar certo
+    return `${dia}/${mes}/${ano}`
   }
 
   const totalPerdido = orcamentosFiltrados.reduce((soma, o) => soma + Number(o.valor || 0), 0)
-  const ordenados = [...orcamentosFiltrados].sort((a, b) => b.data.localeCompare(a.data))
 
   return (
     <div className="orcamentos">
@@ -139,68 +136,63 @@ async function deletar(id) {
         </div>
       )}
 
-      <form className="venda-form" onSubmit={salvar}>
-        <div className="cliente-busca">
-          <span className="campo-label">Cliente (ID ou Nome) *</span>
-          {clienteSelecionado ? (
-            <div className="cliente-selecionado">
-              <span>
-                <strong>#{clienteSelecionado.codigo}</strong> — {clienteSelecionado.nome}
-              </span>
-              <button type="button" onClick={limparCliente}>Trocar</button>
-            </div>
-          ) : (
+      {/* Formulário */}
+      <form className="orcamento-form" onSubmit={salvar}>
+        <h3>Novo Orçamento Perdido</h3>
+
+        <label>
+          Cliente *
+          <div className="cliente-busca">
             <input
-              value={form.buscaCliente}
+              value={form.clienteId ? (clientePorId(form.clienteId)?.nome || '') : form.buscaCliente}
               onChange={(e) => {
-                setForm({ ...form, buscaCliente: e.target.value })
+                setForm((f) => ({ ...f, buscaCliente: e.target.value, clienteId: '' }))
                 setMostrarSugestoes(true)
-                setIndiceSugestao(0)
               }}
               onFocus={() => setMostrarSugestoes(true)}
               onBlur={() => setTimeout(() => setMostrarSugestoes(false), 150)}
-              onKeyDown={onBuscaKey}
-              placeholder="Digite o ID ou o nome..."
-              required
+              placeholder="Digite o nome ou ID do cliente..."
             />
-          )}
-          {mostrarSugestoes && !clienteSelecionado && sugestoes.length > 0 && (
-            <div className="sugestoes">
-              {sugestoes.map((c, i) => (
-                <button
-                  type="button"
-                  key={c.id}
-                  className={i === indiceSugestao ? 'selecionado' : ''}
-                  onMouseDown={(e) => {
-                    e.preventDefault()
-                    escolherCliente(c)
-                  }}
-                >
-                  <span className="sug-id">#{c.codigo}</span>
-                  <span>{c.nome}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+            {form.clienteId && (
+              <button type="button" className="btn-limpar" onClick={limparCliente}>✕</button>
+            )}
+            {mostrarSugestoes && sugestoes.length > 0 && (
+              <div className="sugestoes">
+                {sugestoes.map((c) => (
+                  <button
+                    type="button"
+                    key={c.id}
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                      escolherCliente(c)
+                    }}
+                  >
+                    <span>#{c.codigo} {c.nome}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </label>
 
         <label>
           Produtos
           <input
             value={form.produtos}
             onChange={(e) => setForm({ ...form, produtos: e.target.value })}
-            placeholder="Ex.: Insumos, equipamento..."
+            placeholder="Descrição dos produtos"
           />
         </label>
 
         <label>
-          Valor (R$)
+          Valor
           <input
             type="number"
             step="0.01"
             min="0"
             value={form.valor}
             onChange={(e) => setForm({ ...form, valor: e.target.value })}
+            placeholder="0,00"
           />
         </label>
 
@@ -209,26 +201,24 @@ async function deletar(id) {
           <input
             value={form.concorrente}
             onChange={(e) => setForm({ ...form, concorrente: e.target.value })}
-            placeholder="Nome do concorrente"
+            placeholder="Concorrente que ganhou"
           />
         </label>
 
         <label>
-          Motivo de não fechar
+          Motivo
           <input
             value={form.motivo}
             onChange={(e) => setForm({ ...form, motivo: e.target.value })}
-            placeholder="Ex.: Preço, prazo..."
+            placeholder="Motivo da perda"
           />
         </label>
 
-        <label className="obs-field">
-          Observação (o que houve?)
-          <textarea
+        <label>
+          Observação
+          <input
             value={form.observacao}
             onChange={(e) => setForm({ ...form, observacao: e.target.value })}
-            placeholder="Explique o que aconteceu com este orçamento..."
-            rows="3"
           />
         </label>
 
@@ -241,11 +231,14 @@ async function deletar(id) {
           />
         </label>
 
-        <button type="submit" className="btn-primary">Registrar</button>
+        <div className="orcamento-form-acoes">
+          <button type="submit" className="btn-primary">Registrar Orçamento</button>
+        </div>
       </form>
 
+      {/* Tabela */}
       {ordenados.length === 0 ? (
-        <p className="empty">Nenhum orçamento perdido registrado ainda.</p>
+        <p className="empty">Nenhum orçamento perdido registrado.</p>
       ) : (
         <div className="tabela-wrap">
           <table className="tabela">
@@ -279,7 +272,7 @@ async function deletar(id) {
                     <td className="obs-cell">{o.observacao}</td>
                     <td>{fmtData(o.data)}</td>
                     <td className="acoes">
-                      <button className="btn-link danger" onClick={() => deletar(o.id)}>Excluir</button>
+                        <button className="btn-link danger" onClick={() => deletar(o.id)} title="Excluir">🗑️</button>
                     </td>
                   </tr>
                 )

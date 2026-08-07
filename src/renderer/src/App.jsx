@@ -6,6 +6,7 @@ import Orcamentos from './components/Orcamentos'
 import Dashboard from './components/Dashboard'
 import PainelGerente from './components/PainelGerente'
 import GestaoVendedores from './components/GestaoVendedores'
+import Insights from './components/Insights'
 
 function App() {
   const [usuario, setUsuario] = useState(null)
@@ -31,13 +32,15 @@ function App() {
         { id: 'clientes', label: 'Carteira de Clientes' },
         { id: 'vendas', label: 'Vendas' },
         { id: 'orcamentos', label: 'Orçamentos Perdidos' },
-        { id: 'dashboard', label: 'Dashboard' }
+        { id: 'dashboard', label: 'Dashboard' },
+        { id: 'insights', label: '💡 Dicas' }
       ]
     : [
         { id: 'clientes', label: 'Carteira de Clientes' },
         { id: 'vendas', label: 'Vendas' },
         { id: 'orcamentos', label: 'Orçamentos Perdidos' },
-        { id: 'dashboard', label: 'Dashboard' }
+        { id: 'dashboard', label: 'Dashboard' },
+        { id: 'insights', label: '💡 Dicas' }
       ]
 
   async function salvarCaminho(e) {
@@ -81,7 +84,7 @@ function App() {
               <input
                 value={novoCaminho}
                 onChange={(e) => setNovoCaminho(e.target.value)}
-                placeholder="Ex.: \\servidor\vendas\dados.json"
+                placeholder="Ex.: \servidor\vendas\dados.json"
               />
             </label>
             <button type="submit" className="btn-primary">Salvar caminho</button>
@@ -112,6 +115,7 @@ function App() {
         {aba === 'vendas' && <Vendas usuario={usuario} />}
         {aba === 'orcamentos' && <Orcamentos usuario={usuario} />}
         {aba === 'dashboard' && <Dashboard usuario={usuario} />}
+        {aba === 'insights' && <Insights usuario={usuario} />}
       </main>
     </div>
   )

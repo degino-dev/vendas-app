@@ -219,3 +219,33 @@ export function fazerBackup() {
     console.error('Falha no backup (ignorada):', err)
   }
 }
+
+// Estado de insights (visto/tratado/adiado) - salvo no arquivo de cada vendedor
+export function carregarEstadoInsights(id) {
+  var arquivo = arquivoVendedor(id)
+  if (!arquivo) return { vistos: [], tratados: [], adiados: {} }
+  try {
+    if (!existsSync(arquivo)) return { vistos: [], tratados: [], adiados: {} }
+    var dados = JSON.parse(readFileSync(arquivo, 'utf-8'))
+    return dados.insights || { vistos: [], tratados: [], adiados: {} }
+  } catch (err) {
+    return { vistos: [], tratados: [], adiados: {} }
+  }
+}
+
+export function salvarEstadoInsights(id, estado) {
+  var arquivo = arquivoVendedor(id)
+  if (!arquivo) return { ok: true }
+  try {
+    garantirPastas(dirname(arquivo))
+    var dados = {}
+    if (existsSync(arquivo)) {
+      try { dados = JSON.parse(readFileSync(arquivo, 'utf-8')) } catch (e) { dados = {} }
+    }
+    dados.insights = estado
+    writeFileSync(arquivo, JSON.stringify(dados, null, 2), 'utf-8')
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, erro: 'Sem permissao para gravar: ' + String(err) }
+  }
+}

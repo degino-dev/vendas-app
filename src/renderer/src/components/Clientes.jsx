@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { confirmar } from '../utils/confirmar'
+import ClienteDetalhe from './ClienteDetalhe'
 
 const ROTULO_STATUS = {
   'ativo': 'Ativo',
@@ -27,6 +28,9 @@ function Clientes({ usuario }) {
   const [cnpjMsg, setCnpjMsg] = useState('')
   const [cnpjTipo, setCnpjTipo] = useState('')
   const [filtroStatus, setFiltroStatus] = useState(null)
+  const [filtroAbc, setFiltroAbc] = useState(null)
+  const [buscaNome, setBuscaNome] = useState('')
+  const [clienteSelecionado, setClienteSelecionado] = useState(null)
 
   useEffect(() => {
     const vendedorId = usuario.admin ? null : usuario.id
@@ -47,15 +51,24 @@ function Clientes({ usuario }) {
     return cidades.filter((c) => c.nome.toLowerCase().includes(b)).slice(0, 8)
   }, [cidades, buscaCidade])
 
+  // Calcula indicadores (status, datas) E a curva ABC de cada cliente
   const clientesComIndicadores = useMemo(() => {
     const vendasPorCliente = {}
+    const totalPorCliente = {}
     for (const v of vendas) {
       if (!vendasPorCliente[v.clienteId]) vendasPorCliente[v.clienteId] = []
       vendasPorCliente[v.clienteId].push(v.data)
+      totalPorCliente[v.clienteId] = (totalPorCliente[v.clienteId] || 0) +
+        Number(v.valorInsumos || 0) + Number(v.valorEquipamento || 0)
     }
-
     const hoje = Date.now()
     const DIA = 86400000
+
+    // Ranking por total gasto para calcular a curva ABC
+    const ranking = Object.keys(totalPorCliente)
+      .map((cid) => ({ id: cid, total: totalPorCliente[cid] }))
+      .sort((a, b) => b.total - a.total)
+    const totalClientesComCompra = ranking.length
 
     return clientes
       .map((c) => {
@@ -68,9 +81,20 @@ function Clientes({ usuario }) {
           diasInativo = Math.max(0, Math.floor((hoje - new Date(ultimaCompra).getTime()) / DIA))
           status = diasInativo <= 30 ? 'ativo' : diasInativo <= 90 ? 'atencao' : 'inativo'
         }
-        return { ...c, primeiraCompra, ultimaCompra, diasInativo, status }
+
+        // Curva ABC: posição no ranking de quem comprou
+        let abc = 'C'
+        const pos = ranking.findIndex((r) => r.id === c.id)
+        if (pos !== -1 && totalClientesComCompra > 0) {
+          const percentil = ((pos + 1) / totalClientesComCompra) * 100
+          if (percentil <= 20) abc = 'A'
+          else if (percentil <= 50) abc = 'B'
+        }
+
+        return { ...c, primeiraCompra, ultimaCompra, diasInativo, status, abc, totalGasto: totalPorCliente[c.id] || 0 }
       })
-      .sort((a, b) => a.codigo - b.codigo)
+      // ORDENAÇÃO ALFABÉTICA POR NOME
+      .sort((a, b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'))
   }, [clientes, vendas])
 
   // Contagens por status para o painel
@@ -80,23 +104,27 @@ function Clientes({ usuario }) {
     return cont
   }, [clientesComIndicadores])
 
-  // Aplica o filtro de status na tabela
+  // Contagens por curva ABC
+  const contagemAbc = useMemo(() => {
+    const cont = { A: 0, B: 0, C: 0 }
+    for (const c of clientesComIndicadores) cont[c.abc]++
+    return cont
+  }, [clientesComIndicadores])
+
+  // Aplica os filtros: status + curva ABC + busca por nome
   const clientesFiltrados = useMemo(() => {
-    if (!filtroStatus) return clientesComIndicadores
-    return clientesComIndicadores.filter((c) => c.status === filtroStatus)
-  }, [clientesComIndicadores, filtroStatus])
+    let lista = clientesComIndicadores
+    if (filtroStatus) lista = lista.filter((c) => c.status === filtroStatus)
+    if (filtroAbc) lista = lista.filter((c) => c.abc === filtroAbc)
+    const b = buscaNome.trim().toLowerCase()
+    if (b) lista = lista.filter((c) => String(c.nome || '').toLowerCase().includes(b))
+    return lista
+  }, [clientesComIndicadores, filtroStatus, filtroAbc, buscaNome])
 
   const fmtData = (d) => {
     if (!d) return '—'
     const [ano, mes, dia] = d.split('-')
     return `${dia}/${mes}/${ano}`
-  }
-
-  const fmtCnpj = (c) => {
-    if (!c) return ''
-    const d = String(c).replace(/\D/g, '')
-    if (d.length !== 14) return d
-    return `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`
   }
 
   async function consultarCnpj(cnpj) {
@@ -152,13 +180,11 @@ function Clientes({ usuario }) {
   async function salvar(e) {
     e.preventDefault()
     setErro('')
-
     const codigo = Number(form.codigo)
     if (!form.codigo || !Number.isInteger(codigo) || codigo <= 0) {
       setErro('Informe um ID válido (número inteiro maior que zero).')
       return
     }
-
     const duplicado = clientes.some(
       (c) => Number(c.codigo) === codigo && (!editando || c.id !== editando.id)
     )
@@ -166,7 +192,6 @@ function Clientes({ usuario }) {
       setErro(`Já existe um cliente com o ID ${codigo}.`)
       return
     }
-
     const payload = {
       codigo,
       nome: form.nome,
@@ -176,14 +201,12 @@ function Clientes({ usuario }) {
       cidade: form.cidade,
       segmento: form.segmento
     }
-
     let res
     if (editando) {
       res = await window.api.atualizarCliente({ ...editando, ...payload })
     } else {
       res = await window.api.criarCliente({ ...payload, vendedorId: usuario.id })
     }
-
     if (res.ok) {
       setClientes((prev) =>
         editando ? prev.map((c) => (c.id === res.cliente.id ? res.cliente : c)) : [...prev, res.cliente]
@@ -194,14 +217,14 @@ function Clientes({ usuario }) {
     }
   }
 
-async function deletar(cliente) {
-  const id = typeof cliente === 'object' && cliente !== null ? cliente.id : cliente
-  const confirmado = confirm('Excluir este cliente?')
-  window.api.focarJanela()
-  if (!confirmado) return
-  await window.api.deletarCliente(id)
-  setClientes((prev) => prev.filter((c) => c.id !== id))
-}
+  async function deletar(cliente) {
+    const id = typeof cliente === 'object' && cliente !== null ? cliente.id : cliente
+    const confirmado = confirm('Excluir este cliente?')
+    window.api.focarJanela()
+    if (!confirmado) return
+    await window.api.deletarCliente(id)
+    setClientes((prev) => prev.filter((c) => c.id !== id))
+  }
 
   // Cards do painel de resumo
   const cardsPainel = [
@@ -210,6 +233,16 @@ async function deletar(cliente) {
     { status: 'inativo', rotulo: 'Inativos', cor: 'vermelho' }
   ]
 
+  // DEPOIS de todos os hooks: se um cliente foi selecionado, mostra a página de estatísticas
+  if (clienteSelecionado) {
+    return (
+      <ClienteDetalhe
+        clienteId={clienteSelecionado}
+        onVoltar={() => setClienteSelecionado(null)}
+      />
+    )
+  }
+
   return (
     <div className="clientes">
       <div className="section-head">
@@ -217,7 +250,7 @@ async function deletar(cliente) {
         <button className="btn-primary" onClick={abrirNovo}>+ Novo Cliente</button>
       </div>
 
-      {/* Painel de resumo por status */}
+      {/* Painel de resumo por status + curva ABC */}
       <div className="painel-status">
         {cardsPainel.map((card) => (
           <button
@@ -229,10 +262,39 @@ async function deletar(cliente) {
             <span className="painel-rotulo">{card.rotulo}</span>
           </button>
         ))}
-        {filtroStatus && (
-          <button className="painel-limpar" onClick={() => setFiltroStatus(null)}>
-            ✕ Limpar Filtro
+
+        {/* Botões da Curva ABC */}
+        <div className="painel-abc">
+          {['A', 'B', 'C'].map((letra) => (
+            <button
+              key={letra}
+              className={`painel-card abc-botao abc-${letra} ${filtroAbc === letra ? 'ativo' : ''}`}
+              onClick={() => setFiltroAbc(filtroAbc === letra ? null : letra)}
+              title={`Clientes da curva ${letra}`}
+            >
+              <span className="painel-numero">{contagemAbc[letra]}</span>
+              <span className="painel-rotulo">Curva {letra}</span>
+            </button>
+          ))}
+        </div>
+
+        {(filtroStatus || filtroAbc || buscaNome) && (
+          <button className="painel-limpar" onClick={() => { setFiltroStatus(null); setFiltroAbc(null); setBuscaNome('') }}>
+            ✕ Limpar Filtros
           </button>
+        )}
+      </div>
+
+      {/* Busca por nome */}
+      <div className="busca-cliente">
+        <input
+          type="text"
+          value={buscaNome}
+          onChange={(e) => setBuscaNome(e.target.value)}
+          placeholder="🔍 Buscar cliente pelo nome..."
+        />
+        {buscaNome && (
+          <button className="btn-limpar" onClick={() => setBuscaNome('')}>✕</button>
         )}
       </div>
 
@@ -240,7 +302,6 @@ async function deletar(cliente) {
         <form className="cliente-form" onSubmit={salvar}>
           <h3>{editando ? 'Editar Cliente' : 'Novo Cliente'}</h3>
           {erro && <p className="form-erro">{erro}</p>}
-
           <div className="cliente-form-linha">
             <label>
               ID *
@@ -335,7 +396,6 @@ async function deletar(cliente) {
                 placeholder="Ex.: Clínica, Hospital..."
               />
             </label>
-
             <div className="cliente-form-acoes">
               <button type="submit" className="btn-primary">Salvar</button>
               <button type="button" className="btn-secondary" onClick={() => setMostrarForm(false)}>
@@ -343,7 +403,6 @@ async function deletar(cliente) {
               </button>
             </div>
           </div>
-
           <div className="cnpj-status-linha">
             {consultandoCnpj && <span className="cnpj-status carregando">Consultando CNPJ...</span>}
             {!consultandoCnpj && cnpjMsg && (
@@ -355,9 +414,11 @@ async function deletar(cliente) {
 
       {clientesFiltrados.length === 0 ? (
         <p className="empty">
-          {filtroStatus
-            ? `Nenhum cliente com status "${ROTULO_STATUS[filtroStatus]}".`
-            : 'Nenhum cliente cadastrado ainda.'}
+          {buscaNome
+            ? `Nenhum cliente encontrado para "${buscaNome}".`
+            : filtroStatus || filtroAbc
+              ? 'Nenhum cliente com esse filtro.'
+              : 'Nenhum cliente cadastrado ainda.'}
         </p>
       ) : (
         <div className="tabela-wrap">
@@ -366,12 +427,8 @@ async function deletar(cliente) {
               <tr>
                 <th>ID</th>
                 <th>Nome</th>
-                <th>CNPJ</th>
                 {usuario.admin && <th>Vendedor</th>}
-                <th>E-mail</th>
-                <th>WhatsApp</th>
                 <th>Cidade</th>
-                <th>Segmento</th>
                 <th>1ª Compra</th>
                 <th>Últ. Compra</th>
                 <th>Inativo</th>
@@ -385,13 +442,13 @@ async function deletar(cliente) {
                 return (
                   <tr key={c.id}>
                     <td className="rank">{c.codigo}</td>
-                    <td>{c.nome}</td>
-                    <td>{fmtCnpj(c.cnpj)}</td>
+                    <td>
+                      <button className="link-cliente" onClick={() => setClienteSelecionado(c.id)}>
+                        {c.nome}
+                      </button>
+                    </td>
                     {usuario.admin && <td>{vend ? vend.nome : '-'}</td>}
-                    <td>{c.email}</td>
-                    <td>{c.whats}</td>
                     <td>{c.cidade}</td>
-                    <td>{c.segmento}</td>
                     <td>{fmtData(c.primeiraCompra)}</td>
                     <td>{fmtData(c.ultimaCompra)}</td>
                     <td>
@@ -407,8 +464,8 @@ async function deletar(cliente) {
                       </span>
                     </td>
                     <td className="acoes">
-                      <button className="btn-acao" onClick={() => abrirEdicao(c)}>✏️ Editar</button>
-                      <button className="btn-acao btn-acao-danger" onClick={() => deletar(c)}>🗑️ Excluir</button>
+                      <button className="btn-acao" onClick={() => abrirEdicao(c)} title="Editar">✏️</button>
+                      <button className="btn-acao btn-acao-danger" onClick={() => deletar(c)} title="Excluir">🗑️</button>
                     </td>
                   </tr>
                 )

@@ -126,7 +126,13 @@ function PainelGerente() {
     return orcamentos.filter((o) => o.clienteId === filtroCliente)
   }, [orcamentos, filtroCliente])
 
-  const fmtValor = (v) => Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+  const fmtValor = (v) =>
+Number(v || 0).toLocaleString('pt-BR', {
+style: 'currency',
+currency: 'BRL',
+minimumFractionDigits: 2,
+maximumFractionDigits: 2
+})
   const fmtPct = (p) => `${p.toFixed(1).replace('.', ',')}%`
   const fmtData = (d) => {
     if (!d) return ''

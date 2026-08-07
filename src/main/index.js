@@ -6,8 +6,18 @@ import {
   carregarVendedores, salvarVendedores,
   carregarDadosVendedor, salvarDadosVendedor,
   carregarVisaoGerente, migrarDadosAntigos, fazerBackup,
-  caminhoArquivo, alterarCaminho
+  caminhoArquivo, alterarCaminho,
+  carregarEstadoInsights, salvarEstadoInsights
 } from './storage'
+import { gerarInsights, atualizarEstado, gerarEstatisticasCliente } from './insights'
+
+// --- Impede registrar o mesmo canal de IPC duas vezes (evita crash) ---
+const canaisRegistrados = new Set()
+function handleUnico(canal, fn) {
+  if (canaisRegistrados.has(canal)) return
+  canaisRegistrados.add(canal)
+  ipcMain.handle(canal, fn)
+}
 
 // --- Utilitários ---
 function capitalizarTexto(texto) {
@@ -29,7 +39,7 @@ function capitalizarTexto(texto) {
 let sessao = null // { id, nome, usuario, admin }
 
 // --- Login ---
-ipcMain.handle('auth:login', (_e, { usuario, senha }) => {
+handleUnico('auth:login', (_e, { usuario, senha }) => {
   const vendedores = carregarVendedores()
   const vendedor = vendedores.find((v) => v.usuario.toLowerCase() === usuario.toLowerCase())
   if (!vendedor) return { ok: false, erro: 'Usuário não encontrado' }
@@ -40,7 +50,7 @@ ipcMain.handle('auth:login', (_e, { usuario, senha }) => {
 })
 
 // --- Vendedores (admin) ---
-ipcMain.handle('vendedores:criar', (_e, { nome, usuario, senha, admin, metaMensal, metaSemanal }) => {
+handleUnico('vendedores:criar', (_e, { nome, usuario, senha, admin, metaMensal, metaSemanal }) => {
   const vendedores = carregarVendedores()
   if (vendedores.some((v) => v.usuario.toLowerCase() === usuario.toLowerCase())) {
     return { ok: false, erro: 'Usuário já existe' }
@@ -60,7 +70,7 @@ ipcMain.handle('vendedores:criar', (_e, { nome, usuario, senha, admin, metaMensa
   return { ok: true, vendedor: seguro }
 })
 
-ipcMain.handle('vendedores:atualizar', (_e, vendedor) => {
+handleUnico('vendedores:atualizar', (_e, vendedor) => {
   const vendedores = carregarVendedores()
   const idx = vendedores.findIndex((v) => v.id === vendedor.id)
   if (idx === -1) return { ok: false, erro: 'Vendedor não encontrado' }
@@ -83,11 +93,11 @@ ipcMain.handle('vendedores:atualizar', (_e, vendedor) => {
   return { ok: true, vendedor: seguro }
 })
 
-ipcMain.handle('vendedores:listar', () => {
+handleUnico('vendedores:listar', () => {
   return carregarVendedores().map(({ senhaHash, ...v }) => v)
 })
 
-ipcMain.handle('vendedores:deletar', (_e, id) => {
+handleUnico('vendedores:deletar', (_e, id) => {
   if (id === 'admin') return { ok: false, erro: 'Não é possível excluir o admin principal' }
   let vendedores = carregarVendedores()
   vendedores = vendedores.filter((v) => v.id !== id)
@@ -96,7 +106,6 @@ ipcMain.handle('vendedores:deletar', (_e, id) => {
 })
 
 // --- Acesso aos dados conforme o perfil ---
-// Vendedor: só o arquivo dele. Admin/gerente: todos.
 function dadosParaPerfil() {
   if (sessao && sessao.admin) return carregarVisaoGerente()
   if (sessao) {
@@ -107,14 +116,14 @@ function dadosParaPerfil() {
 }
 
 // --- Clientes ---
-ipcMain.handle('clientes:listar', (_e, vendedorId) => {
+handleUnico('clientes:listar', (_e, vendedorId) => {
   const dados = dadosParaPerfil()
   if (sessao && !sessao.admin) return dados.clientes
   if (vendedorId) return dados.clientes.filter((c) => c.vendedorId === vendedorId)
   return dados.clientes
 })
 
-ipcMain.handle('clientes:criar', (_e, cliente) => {
+handleUnico('clientes:criar', (_e, cliente) => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
   const dados = dadosParaPerfil()
   const codigo = Number(cliente.codigo)
@@ -138,7 +147,7 @@ ipcMain.handle('clientes:criar', (_e, cliente) => {
   return { ok: true, cliente: novo }
 })
 
-ipcMain.handle('clientes:atualizar', (_e, cliente) => {
+handleUnico('clientes:atualizar', (_e, cliente) => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
   const dados = dadosParaPerfil()
   const idx = dados.clientes.findIndex((c) => c.id === cliente.id)
@@ -161,7 +170,7 @@ ipcMain.handle('clientes:atualizar', (_e, cliente) => {
   return { ok: true, cliente: dados.clientes[idx] }
 })
 
-ipcMain.handle('clientes:deletar', (_e, id) => {
+handleUnico('clientes:deletar', (_e, id) => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
   const dados = dadosParaPerfil()
   dados.clientes = dados.clientes.filter((c) => c.id !== id)
@@ -170,14 +179,14 @@ ipcMain.handle('clientes:deletar', (_e, id) => {
 })
 
 // --- Vendas ---
-ipcMain.handle('vendas:listar', (_e, vendedorId) => {
+handleUnico('vendas:listar', (_e, vendedorId) => {
   const dados = dadosParaPerfil()
   if (sessao && !sessao.admin) return dados.vendas
   if (vendedorId) return dados.vendas.filter((v) => v.vendedorId === vendedorId)
   return dados.vendas
 })
 
-ipcMain.handle('vendas:listarPorMes', (_e, { vendedorId, ano, mes }) => {
+handleUnico('vendas:listarPorMes', (_e, { vendedorId, ano, mes }) => {
   const dados = dadosParaPerfil()
   const alvo = String(ano) + '-' + String(mes).padStart(2, '0')
   let vendas = dados.vendas
@@ -189,7 +198,7 @@ ipcMain.handle('vendas:listarPorMes', (_e, { vendedorId, ano, mes }) => {
   return vendas.filter((v) => String(v.data || '').slice(0, 7) === alvo)
 })
 
-ipcMain.handle('vendas:criar', (_e, venda) => {
+handleUnico('vendas:criar', (_e, venda) => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
   const dados = dadosParaPerfil()
   const nova = {
@@ -209,7 +218,7 @@ ipcMain.handle('vendas:criar', (_e, venda) => {
   return { ok: true, venda: nova }
 })
 
-ipcMain.handle('vendas:atualizar', (_e, venda) => {
+handleUnico('vendas:atualizar', (_e, venda) => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
   const dados = dadosParaPerfil()
   const idx = dados.vendas.findIndex((v) => v.id === venda.id)
@@ -219,7 +228,7 @@ ipcMain.handle('vendas:atualizar', (_e, venda) => {
   return { ok: true, venda: dados.vendas[idx] }
 })
 
-ipcMain.handle('vendas:deletar', (_e, id) => {
+handleUnico('vendas:deletar', (_e, id) => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
   const dados = dadosParaPerfil()
   dados.vendas = dados.vendas.filter((v) => v.id !== id)
@@ -228,14 +237,14 @@ ipcMain.handle('vendas:deletar', (_e, id) => {
 })
 
 // --- Orçamentos Perdidos ---
-ipcMain.handle('orcamentos:listar', (_e, vendedorId) => {
+handleUnico('orcamentos:listar', (_e, vendedorId) => {
   const dados = dadosParaPerfil()
   if (sessao && !sessao.admin) return dados.orcamentosPerdidos
   if (vendedorId) return dados.orcamentosPerdidos.filter((o) => o.vendedorId === vendedorId)
   return dados.orcamentosPerdidos
 })
 
-ipcMain.handle('orcamentos:criar', (_e, orcamento) => {
+handleUnico('orcamentos:criar', (_e, orcamento) => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
   const dados = dadosParaPerfil()
   const novo = {
@@ -254,7 +263,7 @@ ipcMain.handle('orcamentos:criar', (_e, orcamento) => {
   return { ok: true, orcamento: novo }
 })
 
-ipcMain.handle('orcamentos:deletar', (_e, id) => {
+handleUnico('orcamentos:deletar', (_e, id) => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
   const dados = dadosParaPerfil()
   dados.orcamentosPerdidos = dados.orcamentosPerdidos.filter((o) => o.id !== id)
@@ -262,8 +271,23 @@ ipcMain.handle('orcamentos:deletar', (_e, id) => {
   return { ok: true }
 })
 
+// --- Insights (Dicas) ---
+handleUnico('insights:gerar', () => {
+  const dados = dadosParaPerfil()
+  const estado = sessao ? carregarEstadoInsights(sessao.id) : { vistos: [], tratados: [], adiados: {} }
+  return gerarInsights({ clientes: dados.clientes, vendas: dados.vendas, orcamentosPerdidos: dados.orcamentosPerdidos, vendedores: dados.vendedores || [], estado })
+})
+
+handleUnico('insights:marcar', (_e, { acao, chave }) => {
+  if (!sessao) return { ok: false, erro: 'Não autenticado' }
+  const atual = carregarEstadoInsights(sessao.id)
+  const novo = atualizarEstado(atual, acao, chave)
+  salvarEstadoInsights(sessao.id, novo)
+  return { ok: true, estado: novo }
+})
+
 // --- Janela ---
-ipcMain.handle('janela:focar', (evento) => {
+handleUnico('janela:focar', (evento) => {
   const janela = BrowserWindow.fromWebContents(evento.sender)
   if (janela) {
     if (janela.isMinimized()) janela.restore()
@@ -275,7 +299,7 @@ ipcMain.handle('janela:focar', (evento) => {
 
 // --- Cidades (IBGE) ---
 let cacheCidades = null
-ipcMain.handle('cidades:listar', async () => {
+handleUnico('cidades:listar', async () => {
   if (cacheCidades) return cacheCidades
   try {
     const res = await fetch('https://servicodados.ibge.gov.br/api/v1/localidades/municipios')
@@ -293,7 +317,7 @@ ipcMain.handle('cidades:listar', async () => {
 })
 
 // --- Consulta CNPJ ---
-ipcMain.handle('cnpj:consultar', async (_e, cnpj) => {
+handleUnico('cnpj:consultar', async (_e, cnpj) => {
   const limpo = String(cnpj || '').replace(/\D/g, '')
   if (limpo.length !== 14) return { ok: false, erro: 'CNPJ inválido' }
   const apis = [
@@ -319,15 +343,15 @@ ipcMain.handle('cnpj:consultar', async (_e, cnpj) => {
 })
 
 // --- Banco de dados (admin) ---
-ipcMain.handle('config:alterarCaminho', (_e, novoCaminho) => {
+handleUnico('config:alterarCaminho', (_e, novoCaminho) => {
   const res = alterarCaminho(novoCaminho)
   if (res.ok) migrarDadosAntigos()
   return res
 })
 
 // --- Dados (compatibilidade) ---
-ipcMain.handle('dados:carregar', () => dadosParaPerfil())
-ipcMain.handle('dados:salvar', (_e, novosDados) => {
+handleUnico('dados:carregar', () => dadosParaPerfil())
+handleUnico('dados:salvar', (_e, novosDados) => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
   salvarDadosVendedor(sessao.id, {
     clientes: novosDados.clientes || [],
@@ -336,8 +360,13 @@ ipcMain.handle('dados:salvar', (_e, novosDados) => {
   })
   return { ok: true }
 })
-ipcMain.handle('dados:caminho', () => caminhoArquivo())
-ipcMain.handle('app:ping', () => 'pong')
+handleUnico('dados:caminho', () => caminhoArquivo())
+handleUnico('app:ping', () => 'pong')
+handleUnico('clientes:estatisticas', (_e, clienteId) => {
+  const dados = dadosParaPerfil()
+  const cliente = dados.clientes.find((c) => c.id === clienteId)
+  return gerarEstatisticasCliente({ cliente, vendas: dados.vendas })
+})
 
 // --- Janela ---
 function createWindow() {
@@ -354,6 +383,7 @@ function createWindow() {
     }
   })
   mainWindow.once('ready-to-show', () => mainWindow.show())
+  mainWindow.maximize()
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
     return { action: 'deny' }
@@ -366,7 +396,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  createWindow() // janela primeiro, sempre
+  createWindow()
   try {
     migrarDadosAntigos()
     console.log('Dados prontos em:', caminhoArquivo())

@@ -121,7 +121,12 @@ function Dashboard({ usuario }) {
   const pctMetaReal = metaAlvo > 0 ? (valorAtual / metaAlvo) * 100 : 0
 
   const fmtValor = (v) =>
-    Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+Number(v || 0).toLocaleString('pt-BR', {
+style: 'currency',
+currency: 'BRL',
+minimumFractionDigits: 2,
+maximumFractionDigits: 2
+})
 
   const fmtPct = (p) => `${p.toFixed(1).replace('.', ',')}%`
 
