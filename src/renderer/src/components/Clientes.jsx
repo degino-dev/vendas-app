@@ -44,6 +44,14 @@ function Clientes({ usuario }) {
 
   const vendedorPorId = (id) => vendedores.find((v) => v.id === id)
 
+  // Converte "YYYY-MM-DD" em Date local (evita erro de fuso do new Date('YYYY-MM-DD'))
+  const parseData = (d) => {
+    if (!d) return null
+    const m = String(d).match(/^(\d{4})-(\d{2})-(\d{2})/)
+    if (!m) return null
+    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  }
+
   // Filtra cidades do IBGE conforme o que foi digitado
   const cidadesFiltradas = useMemo(() => {
     const b = buscaCidade.trim().toLowerCase()
@@ -61,7 +69,9 @@ function Clientes({ usuario }) {
       totalPorCliente[v.clienteId] = (totalPorCliente[v.clienteId] || 0) +
         Number(v.valorInsumos || 0) + Number(v.valorEquipamento || 0)
     }
-    const hoje = Date.now()
+    const hoje = new Date()
+    hoje.setHours(0, 0, 0, 0)
+    const hojeMs = hoje.getTime()
     const DIA = 86400000
 
     // Ranking por total gasto para calcular a curva ABC
@@ -72,16 +82,16 @@ function Clientes({ usuario }) {
 
     return clientes
       .map((c) => {
-        const datas = (vendasPorCliente[c.id] || []).sort()
+        const datas = (vendasPorCliente[c.id] || []).slice().sort()
         const primeiraCompra = datas.length ? datas[0] : null
         const ultimaCompra = datas.length ? datas[datas.length - 1] : null
         let diasInativo = null
         let status = 'sem-compra'
         if (ultimaCompra) {
-          diasInativo = Math.max(0, Math.floor((hoje - new Date(ultimaCompra).getTime()) / DIA))
+          const dUlt = parseData(ultimaCompra)
+          diasInativo = dUlt ? Math.max(0, Math.floor((hojeMs - dUlt.getTime()) / DIA)) : 0
           status = diasInativo <= 30 ? 'ativo' : diasInativo <= 90 ? 'atencao' : 'inativo'
         }
-
         // Curva ABC: posição no ranking de quem comprou
         let abc = 'C'
         const pos = ranking.findIndex((r) => r.id === c.id)
@@ -90,7 +100,6 @@ function Clientes({ usuario }) {
           if (percentil <= 20) abc = 'A'
           else if (percentil <= 50) abc = 'B'
         }
-
         return { ...c, primeiraCompra, ultimaCompra, diasInativo, status, abc, totalGasto: totalPorCliente[c.id] || 0 }
       })
       // ORDENAÇÃO ALFABÉTICA POR NOME
@@ -123,8 +132,15 @@ function Clientes({ usuario }) {
 
   const fmtData = (d) => {
     if (!d) return '—'
-    const [ano, mes, dia] = d.split('-')
-    return `${dia}/${mes}/${ano}`
+    const m = String(d).match(/^(\d{4})-(\d{2})-(\d{2})/)
+    if (!m) return d
+    return `${m[3]}/${m[2]}/${m[1]}`
+  }
+
+  const fmtCnpj = (v) => {
+    const s = String(v || '').replace(/\D/g, '')
+    if (s.length !== 14) return v || '—'
+    return `${s.slice(0, 2)}.${s.slice(2, 5)}.${s.slice(5, 8)}/${s.slice(8, 12)}-${s.slice(12)}`
   }
 
   async function consultarCnpj(cnpj) {
@@ -137,11 +153,6 @@ function Clientes({ usuario }) {
       setForm((f) => ({ ...f, nome: res.razaoSocial || f.nome }))
       setCnpjMsg(`Nome preenchido: ${res.razaoSocial}`)
       setCnpjTipo('ok')
-      if (res.municipio) {
-        const val = `${res.municipio} - ${res.uf}`
-        setForm((f) => ({ ...f, cidade: val }))
-        setBuscaCidade(val)
-      }
     } else {
       setCnpjMsg((res && res.erro) || 'CNPJ não encontrado')
       setCnpjTipo('erro')
@@ -219,8 +230,7 @@ function Clientes({ usuario }) {
 
   async function deletar(cliente) {
     const id = typeof cliente === 'object' && cliente !== null ? cliente.id : cliente
-    const confirmado = confirm('Excluir este cliente?')
-    window.api.focarJanela()
+    const confirmado = confirmar('Excluir este cliente?')
     if (!confirmado) return
     await window.api.deletarCliente(id)
     setClientes((prev) => prev.filter((c) => c.id !== id))
@@ -262,7 +272,6 @@ function Clientes({ usuario }) {
             <span className="painel-rotulo">{card.rotulo}</span>
           </button>
         ))}
-
         {/* Botões da Curva ABC */}
         <div className="painel-abc">
           {['A', 'B', 'C'].map((letra) => (
@@ -277,7 +286,6 @@ function Clientes({ usuario }) {
             </button>
           ))}
         </div>
-
         {(filtroStatus || filtroAbc || buscaNome) && (
           <button className="painel-limpar" onClick={() => { setFiltroStatus(null); setFiltroAbc(null); setBuscaNome('') }}>
             ✕ Limpar Filtros
@@ -428,6 +436,7 @@ function Clientes({ usuario }) {
                 <th>ID</th>
                 <th>Nome</th>
                 {usuario.admin && <th>Vendedor</th>}
+                <th>CNPJ</th>
                 <th>Cidade</th>
                 <th>1ª Compra</th>
                 <th>Últ. Compra</th>
@@ -448,6 +457,7 @@ function Clientes({ usuario }) {
                       </button>
                     </td>
                     {usuario.admin && <td>{vend ? vend.nome : '-'}</td>}
+                    <td>{fmtCnpj(c.cnpj)}</td>
                     <td>{c.cidade}</td>
                     <td>{fmtData(c.primeiraCompra)}</td>
                     <td>{fmtData(c.ultimaCompra)}</td>
@@ -477,5 +487,4 @@ function Clientes({ usuario }) {
     </div>
   )
 }
-
 export default Clientes

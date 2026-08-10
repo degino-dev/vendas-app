@@ -16,6 +16,13 @@ function App() {
   const [novoCaminho, setNovoCaminho] = useState('')
   const [msgBanco, setMsgBanco] = useState('')
 
+  // --- Inteligência Artificial (Gemini) ---
+  const [mostrarIA, setMostrarIA] = useState(false)
+  const [msgIA, setMsgIA] = useState('')
+  const [msgIATipo, setMsgIATipo] = useState('')
+  const [analisando, setAnalisando] = useState(false)
+  const [resultadoIA, setResultadoIA] = useState('')
+
   useEffect(() => {
     if (!usuario) return
     window.api.caminhoArquivo().then(setCaminho)
@@ -57,11 +64,32 @@ function App() {
     }
   }
 
+  async function analisar() {
+    setMsgIA('')
+    setResultadoIA('')
+    setAnalisando(true)
+    const res = await window.api.analisarComIA()
+    setAnalisando(false)
+    if (res && res.ok) {
+      setResultadoIA(res.texto || '')
+      if (!res.texto) {
+        setMsgIA('A IA não retornou insights. Tente novamente.')
+        setMsgIATipo('erro')
+      }
+    } else {
+      setMsgIA((res && res.erro) || 'Erro ao analisar com a IA.')
+      setMsgIATipo('erro')
+    }
+  }
+
   return (
     <div className="app">
       <header className="topbar">
         <h1>Controle de Vendas</h1>
         <div className="topbar-right">
+          <button className="ia-btn" onClick={() => setMostrarIA((v) => !v)}>
+            🤖 Analisar com IA
+          </button>
           {usuario.admin && (
             <button className="db-btn" onClick={() => setMostrarBanco((v) => !v)}>
               🗄️ Banco de Dados
@@ -96,6 +124,28 @@ function App() {
         </div>
       )}
 
+      {mostrarIA && (
+        <div className="ia-painel">
+          <div className="ia-head">
+            <h3>🤖 Análise com Inteligência Artificial</h3>
+            <button className="btn-secondary" onClick={() => setMostrarIA(false)}>Fechar</button>
+          </div>
+          <p className="ia-dica">
+            A IA analisa {usuario.admin ? 'todos os vendedores' : 'sua carteira'} e gera insights acionáveis para aumentar as vendas.
+          </p>
+          {msgIA && <p className={'ia-msg ' + msgIATipo}>{msgIA}</p>}
+          <button className="btn-primary ia-analisar-btn" onClick={analisar} disabled={analisando}>
+            {analisando ? '🤖 Analisando...' : '🤖 Analisar com IA'}
+          </button>
+          {resultadoIA && (
+            <div className="ia-resultado">
+              <h4>💡 Insights gerados</h4>
+              <pre className="ia-texto">{resultadoIA}</pre>
+            </div>
+          )}
+        </div>
+      )}
+
       <nav className="tabs">
         {abas.map((a) => (
           <button
@@ -120,5 +170,4 @@ function App() {
     </div>
   )
 }
-
 export default App

@@ -7,15 +7,16 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "start": "electron-vite preview",
-    "dist": "electron-vite build && electron-builder --win",
-    "postinstall": "electron-builder install-app-deps"
+    "preview": "electron-vite preview",
+    "install-app-deps": "electron-builder install-app-deps",
+    "build:win": "electron-vite build && electron-builder --win --publish always"
   },
-"dependencies": {
-  "bcryptjs": "^2.4.3",
-  "react": "^18.3.1",
-  "react-dom": "^18.3.1"
-},
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "electron-updater": "^6.8.9",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.2",
     "electron": "^33.2.0",

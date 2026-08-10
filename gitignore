@@ -4,3 +4,4 @@ out/
 *.log
 dados.json
 config.json
+src/main/chave.js

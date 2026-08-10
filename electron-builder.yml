@@ -1,0 +1,23 @@
+appId: com.deciocamargo.vendas
+productName: Controle de Vendas
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**
+  - package.json
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: true
+  perMachine: false
+  allowToChangeInstallationDirectory: false
+  createDesktopShortcut: true
+  shortcutName: Controle de Vendas
+publish:
+  provider: github
+  owner: degino-dev
+  repo: vendas-app

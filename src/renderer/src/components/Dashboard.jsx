@@ -4,18 +4,47 @@ const MESES = [
   'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
   'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
 ]
-
 const MULT = { mes: 1, trimestre: 3, ano: 12 }
+
+// Converte "YYYY-MM-DD" em Date local (evita erro de fuso do new Date('YYYY-MM-DD'))
+function parseData(d) {
+  if (!d) return null
+  const m = String(d).match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!m) return null
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+}
+
+// Calcula o início (segunda) e fim (domingo) da semana atual
+function semanaAtualRange() {
+  const d = new Date()
+  const dia = d.getDay()
+  const diff = dia === 0 ? -6 : 1 - dia
+  const inicio = new Date(d)
+  inicio.setDate(d.getDate() + diff)
+  inicio.setHours(0, 0, 0, 0)
+  const fim = new Date(inicio)
+  fim.setDate(inicio.getDate() + 6)
+  fim.setHours(23, 59, 59, 999)
+  return { inicio, fim }
+}
+
+const fmtValor = (v) =>
+  Number(v || 0).toLocaleString('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })
+
+const fmtPct = (p) => `${p.toFixed(1).replace('.', ',')}%`
 
 function Dashboard({ usuario }) {
   const [vendas, setVendas] = useState([])
   const [clientes, setClientes] = useState([])
-
-  const hoje = new Date()
   const [tipoPeriodo, setTipoPeriodo] = useState('mes')
-  const [mes, setMes] = useState(hoje.getMonth() + 1)
-  const [trimestre, setTrimestre] = useState(Math.floor(hoje.getMonth() / 3) + 1)
-  const [ano, setAno] = useState(hoje.getFullYear())
+  const [mes, setMes] = useState(() => new Date().getMonth() + 1)
+  const [trimestre, setTrimestre] = useState(() => Math.floor(new Date().getMonth() / 3) + 1)
+  const [ano, setAno] = useState(() => new Date().getFullYear())
   const [tipoMeta, setTipoMeta] = useState('mensal')
 
   // Metas do vendedor logado (definidas pelo admin)
@@ -33,7 +62,10 @@ function Dashboard({ usuario }) {
   // Filtra as vendas pelo período selecionado
   const vendasFiltradas = useMemo(() => {
     return vendas.filter((v) => {
-      const [vAno, vMes] = v.data.split('-').map(Number)
+      const m = parseData(v.data)
+      if (!m) return false
+      const vAno = m.getFullYear()
+      const vMes = m.getMonth() + 1
       if (tipoPeriodo === 'mes') return vAno === ano && vMes === mes
       if (tipoPeriodo === 'trimestre') {
         const vTri = Math.floor((vMes - 1) / 3) + 1
@@ -43,27 +75,14 @@ function Dashboard({ usuario }) {
     })
   }, [vendas, tipoPeriodo, mes, trimestre, ano])
 
-  // Calcula o início e fim da semana atual (segunda a domingo)
-  const semanaAtual = useMemo(() => {
-    const d = new Date()
-    const dia = d.getDay()
-    const diff = dia === 0 ? -6 : 1 - dia
-    const inicio = new Date(d)
-    inicio.setDate(d.getDate() + diff)
-    inicio.setHours(0, 0, 0, 0)
-    const fim = new Date(inicio)
-    fim.setDate(inicio.getDate() + 6)
-    fim.setHours(23, 59, 59, 999)
-    return { inicio, fim }
-  }, [])
-
   // Vendas da semana atual
   const vendasSemana = useMemo(() => {
+    const { inicio, fim } = semanaAtualRange()
     return vendas.filter((v) => {
-      const data = new Date(v.data)
-      return data >= semanaAtual.inicio && data <= semanaAtual.fim
+      const data = parseData(v.data)
+      return data && data >= inicio && data <= fim
     })
-  }, [vendas, semanaAtual])
+  }, [vendas])
 
   // Totais do período selecionado
   const totais = useMemo(() => {
@@ -111,24 +130,12 @@ function Dashboard({ usuario }) {
   // Define meta e valores conforme o tipo selecionado
   const metaAtual = tipoMeta === 'semanal' ? META_SEMANAL : META_MENSAL
   const valorAtual = tipoMeta === 'semanal' ? totalSemana : totais.total
-
   const metaAlvo =
     tipoMeta === 'semanal'
       ? META_SEMANAL
       : META_MENSAL * (tipoPeriodo === 'mes' ? 1 : tipoPeriodo === 'trimestre' ? 3 : 12)
-
   const pctMeta = metaAlvo > 0 ? Math.min(100, (valorAtual / metaAlvo) * 100) : 0
   const pctMetaReal = metaAlvo > 0 ? (valorAtual / metaAlvo) * 100 : 0
-
-  const fmtValor = (v) =>
-Number(v || 0).toLocaleString('pt-BR', {
-style: 'currency',
-currency: 'BRL',
-minimumFractionDigits: 2,
-maximumFractionDigits: 2
-})
-
-  const fmtPct = (p) => `${p.toFixed(1).replace('.', ',')}%`
 
   const rotuloPeriodo = () => {
     if (tipoPeriodo === 'mes') return `${MESES[mes - 1]} de ${ano}`
@@ -138,13 +145,7 @@ maximumFractionDigits: 2
 
   const rotuloMeta = () => {
     if (tipoMeta === 'semanal') {
-      const d = new Date()
-      const dia = d.getDay()
-      const diff = dia === 0 ? -6 : 1 - dia
-      const inicio = new Date(d)
-      inicio.setDate(d.getDate() + diff)
-      const fim = new Date(inicio)
-      fim.setDate(inicio.getDate() + 6)
+      const { inicio, fim } = semanaAtualRange()
       return `Semana de ${inicio.getDate()}/${inicio.getMonth() + 1} a ${fim.getDate()}/${fim.getMonth() + 1}`
     }
     return rotuloPeriodo()
@@ -166,7 +167,6 @@ maximumFractionDigits: 2
             <option value="ano">Anual</option>
           </select>
         </label>
-
         {tipoPeriodo === 'mes' && (
           <label>
             Mês
@@ -177,7 +177,6 @@ maximumFractionDigits: 2
             </select>
           </label>
         )}
-
         {tipoPeriodo === 'trimestre' && (
           <label>
             Trimestre
@@ -189,11 +188,10 @@ maximumFractionDigits: 2
             </select>
           </label>
         )}
-
         <label>
           Ano
           <select value={ano} onChange={(e) => setAno(Number(e.target.value))}>
-            {Array.from({ length: 6 }, (_, i) => hoje.getFullYear() - 4 + i).map((a) => (
+            {Array.from({ length: 6 }, (_, i) => new Date().getFullYear() - 4 + i).map((a) => (
               <option key={a} value={a}>{a}</option>
             ))}
           </select>
@@ -259,7 +257,6 @@ maximumFractionDigits: 2
 
       {/* Top 20 */}
       <h3 className="top-titulo">🏆 Top 20 Clientes — {rotuloPeriodo()}</h3>
-
       {ranking.length === 0 ? (
         <p className="empty">Nenhuma venda neste período.</p>
       ) : (
@@ -276,17 +273,17 @@ maximumFractionDigits: 2
               </tr>
             </thead>
             <tbody>
-              {ranking.map((r) => {
+              {ranking.map((r, i) => {
                 const cli = clientePorId(r.clienteId)
                 const pct = totais.total > 0 ? (r.total / totais.total) * 100 : 0
                 return (
-                  <tr key={r.clienteId}>
+                  <tr key={r.clienteId || 'sem-cliente-' + i}>
                     <td className="rank">{cli ? cli.codigo : '-'}</td>
                     <td>{cli ? cli.nome : '(cliente removido)'}</td>
                     <td>{fmtValor(r.insumos)}</td>
                     <td>{fmtValor(r.equipamentos)}</td>
                     <td className="rank-valor">{fmtPct(pct)}</td>
-                    <td>{cli ? cli.cidade : ''}</td>
+                    <td>{cli ? cli.cidade : '—'}</td>
                   </tr>
                 )
               })}
@@ -306,5 +303,4 @@ maximumFractionDigits: 2
     </div>
   )
 }
-
 export default Dashboard

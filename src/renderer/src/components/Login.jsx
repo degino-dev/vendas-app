@@ -57,7 +57,7 @@ function Login({ onLogin }) {
           {carregando ? 'Entrando...' : 'Entrar'}
         </button>
 
-        <p className="login-hint">Admin padrão: admin / admin123</p>
+        <p className="login-hint"></p>
       </form>
     </div>
   )

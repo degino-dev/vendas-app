@@ -1,9 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
+import { confirmar } from '../utils/confirmar'
 
 const MESES_NOME = [
   'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
   'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
 ]
+
+// Data local no formato YYYY-MM-DD (evita bug de fuso do toISOString)
+function dataLocalISO(d = new Date()) {
+  const mes = String(d.getMonth() + 1).padStart(2, '0')
+  const dia = String(d.getDate()).padStart(2, '0')
+  return `${d.getFullYear()}-${mes}-${dia}`
+}
 
 const formVazio = () => ({
   clienteId: '',
@@ -13,15 +21,29 @@ const formVazio = () => ({
   valorInsumos: '',
   pedidoEquipamento: '',
   valorEquipamento: '',
-  data: new Date().toISOString().slice(0, 10),
+  data: dataLocalISO(),
   observacao: ''
 })
+
+const fmtValor = (v) =>
+  Number(v || 0).toLocaleString('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })
+
+const fmtData = (d) => {
+  if (!d) return ''
+  const m = String(d).match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!m) return d
+  return `${m[3]}/${m[2]}/${m[1]}`
+}
 
 function Vendas({ usuario }) {
   const hoje = new Date()
   const anoAtual = hoje.getFullYear()
   const mesAtual = hoje.getMonth() + 1
-
   const [vendas, setVendas] = useState([])
   const [clientes, setClientes] = useState([])
   const [vendedores, setVendedores] = useState([])
@@ -125,7 +147,7 @@ function Vendas({ usuario }) {
       valorInsumos: v.valorInsumos != null ? String(v.valorInsumos) : '',
       pedidoEquipamento: v.pedidoEquipamento || '',
       valorEquipamento: v.valorEquipamento != null ? String(v.valorEquipamento) : '',
-      data: v.data || new Date().toISOString().slice(0, 10),
+      data: v.data || dataLocalISO(),
       observacao: v.observacao || ''
     })
   }
@@ -169,26 +191,12 @@ function Vendas({ usuario }) {
     }
   }
 
-  async function deletar(id) {
-    const confirmado = confirm('Excluir esta venda?')
-    window.api.focarJanela()
+  async function deletar(venda) {
+    const id = typeof venda === 'object' && venda !== null ? venda.id : venda
+    const confirmado = confirmar('Excluir esta venda?')
     if (!confirmado) return
     await window.api.deletarVenda(id)
     setVendas((prev) => prev.filter((v) => v.id !== id))
-  }
-
-  const fmtValor = (v) =>
-    Number(v || 0).toLocaleString('pt-BR', {
-      style: 'currency',
-      currency: 'BRL',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    })
-
-  const fmtData = (d) => {
-    if (!d) return ''
-    const [ano, mes, dia] = d.split('-')
-    return `${dia}/${mes}/${ano}`
   }
 
   const total = vendasFiltradas.reduce(
@@ -217,7 +225,6 @@ function Vendas({ usuario }) {
             ))}
           </select>
         </label>
-
         <label>
           Mês
           <select
@@ -230,7 +237,6 @@ function Vendas({ usuario }) {
             ))}
           </select>
         </label>
-
         {usuario.admin && (
           <label>
             Vendedor
@@ -250,7 +256,6 @@ function Vendas({ usuario }) {
           <h3>{editando ? 'Editar Venda' : 'Nova Venda'}</h3>
           {erro && <p className="form-erro">{erro}</p>}
         </div>
-
         <div className="venda-form-grid">
           <label className="campo-cliente">
             Cliente *
@@ -286,7 +291,6 @@ function Vendas({ usuario }) {
               )}
             </div>
           </label>
-
           <label>
             Envio
             <input
@@ -295,7 +299,6 @@ function Vendas({ usuario }) {
               placeholder="Tipo de envio"
             />
           </label>
-
           <label>
             Ped. Insumos
             <input
@@ -304,7 +307,6 @@ function Vendas({ usuario }) {
               placeholder="Descrição"
             />
           </label>
-
           <label>
             Valor Insumos
             <input
@@ -316,7 +318,6 @@ function Vendas({ usuario }) {
               placeholder="0,00"
             />
           </label>
-
           <label>
             Ped. Equip.
             <input
@@ -325,7 +326,6 @@ function Vendas({ usuario }) {
               placeholder="Descrição"
             />
           </label>
-
           <label>
             Valor Equip.
             <input
@@ -337,7 +337,6 @@ function Vendas({ usuario }) {
               placeholder="0,00"
             />
           </label>
-
           <label>
             Data
             <input
@@ -346,7 +345,6 @@ function Vendas({ usuario }) {
               onChange={(e) => setForm({ ...form, data: e.target.value })}
             />
           </label>
-
           <label className="obs-label">
             Observação
             <input
@@ -354,7 +352,6 @@ function Vendas({ usuario }) {
               onChange={(e) => setForm({ ...form, observacao: e.target.value })}
             />
           </label>
-
           <div className="venda-form-acoes">
             <button type="submit" className="btn-primary">
               {editando ? 'Salvar Alterações' : 'Registrar Venda'}
@@ -398,13 +395,13 @@ function Vendas({ usuario }) {
                     <td className="rank">{cli ? cli.codigo : '-'}</td>
                     <td>{cli ? cli.nome : '(cliente removido)'}</td>
                     {usuario.admin && <td>{vend ? vend.nome : '-'}</td>}
-                    <td>{v.envio}</td>
-                    <td>{v.pedidoInsumos}</td>
+                    <td>{v.envio || '—'}</td>
+                    <td>{v.pedidoInsumos || '—'}</td>
                     <td>{fmtValor(v.valorInsumos)}</td>
-                    <td>{v.pedidoEquipamento}</td>
+                    <td>{v.pedidoEquipamento || '—'}</td>
                     <td>{fmtValor(v.valorEquipamento)}</td>
                     <td>{fmtData(v.data)}</td>
-                    <td className="obs-cell">{v.observacao}</td>
+                    <td className="obs-cell">{v.observacao || '—'}</td>
                     <td className="acoes">
                       <button className="btn-acao" onClick={() => abrirEdicao(v)} title="Editar">✏️</button>
                       <button className="btn-acao btn-acao-danger" onClick={() => deletar(v)} title="Excluir">🗑️</button>
@@ -419,5 +416,4 @@ function Vendas({ usuario }) {
     </div>
   )
 }
-
 export default Vendas
