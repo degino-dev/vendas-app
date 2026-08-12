@@ -7,6 +7,7 @@ import Dashboard from './components/Dashboard'
 import PainelGerente from './components/PainelGerente'
 import GestaoVendedores from './components/GestaoVendedores'
 import Insights from './components/Insights'
+import Consultar from './components/Consultar'
 
 function App() {
   const [usuario, setUsuario] = useState(null)
@@ -15,13 +16,21 @@ function App() {
   const [caminho, setCaminho] = useState('')
   const [novoCaminho, setNovoCaminho] = useState('')
   const [msgBanco, setMsgBanco] = useState('')
+  // ===== NOVO: aviso de atualização disponível =====
+  const [atualizacaoPronta, setAtualizacaoPronta] = useState(false)
 
-  // --- Inteligência Artificial (Gemini) ---
-  const [mostrarIA, setMostrarIA] = useState(false)
-  const [msgIA, setMsgIA] = useState('')
-  const [msgIATipo, setMsgIATipo] = useState('')
-  const [analisando, setAnalisando] = useState(false)
-  const [resultadoIA, setResultadoIA] = useState('')
+  // ===== NOVO: escuta o evento de atualização baixada =====
+  useEffect(() => {
+    if (window.api && window.api.onUpdateBaixado) {
+      window.api.onUpdateBaixado(() => setAtualizacaoPronta(true))
+    }
+  }, [])
+
+  // --- Toda vez que o usuário muda (login/logout), volta para a aba padrão ---
+  useEffect(() => {
+    setAba('clientes')
+    setMostrarBanco(false)
+  }, [usuario])
 
   useEffect(() => {
     if (!usuario) return
@@ -38,15 +47,16 @@ function App() {
         { id: 'gestao', label: 'Gestão de Vendedores' },
         { id: 'clientes', label: 'Carteira de Clientes' },
         { id: 'vendas', label: 'Vendas' },
-        { id: 'orcamentos', label: 'Orçamentos Perdidos' },
-        { id: 'dashboard', label: 'Dashboard' },
+        { id: 'orcamentos', label: 'Orçamentos' },
+        { id: 'consultar', label: '🔍 Consultar' },
         { id: 'insights', label: '💡 Dicas' }
       ]
     : [
         { id: 'clientes', label: 'Carteira de Clientes' },
         { id: 'vendas', label: 'Vendas' },
-        { id: 'orcamentos', label: 'Orçamentos Perdidos' },
+        { id: 'orcamentos', label: 'Orçamentos' },
         { id: 'dashboard', label: 'Dashboard' },
+        { id: 'consultar', label: '🔍 Consultar' },
         { id: 'insights', label: '💡 Dicas' }
       ]
 
@@ -64,32 +74,24 @@ function App() {
     }
   }
 
-  async function analisar() {
-    setMsgIA('')
-    setResultadoIA('')
-    setAnalisando(true)
-    const res = await window.api.analisarComIA()
-    setAnalisando(false)
-    if (res && res.ok) {
-      setResultadoIA(res.texto || '')
-      if (!res.texto) {
-        setMsgIA('A IA não retornou insights. Tente novamente.')
-        setMsgIATipo('erro')
-      }
-    } else {
-      setMsgIA((res && res.erro) || 'Erro ao analisar com a IA.')
-      setMsgIATipo('erro')
-    }
-  }
-
   return (
     <div className="app">
+      {/* ===== NOVO: aviso de atualização baixada ===== */}
+      {atualizacaoPronta && (
+        <div className="update-banner">
+          <span>🔄 Nova versão baixada!</span>
+          <button
+            className="btn-primary"
+            onClick={() => window.api.reiniciarParaAtualizar()}
+          >
+            Reiniciar agora
+          </button>
+        </div>
+      )}
+
       <header className="topbar">
         <h1>Controle de Vendas</h1>
         <div className="topbar-right">
-          <button className="ia-btn" onClick={() => setMostrarIA((v) => !v)}>
-            🤖 Analisar com IA
-          </button>
           {usuario.admin && (
             <button className="db-btn" onClick={() => setMostrarBanco((v) => !v)}>
               🗄️ Banco de Dados
@@ -124,28 +126,6 @@ function App() {
         </div>
       )}
 
-      {mostrarIA && (
-        <div className="ia-painel">
-          <div className="ia-head">
-            <h3>🤖 Análise com Inteligência Artificial</h3>
-            <button className="btn-secondary" onClick={() => setMostrarIA(false)}>Fechar</button>
-          </div>
-          <p className="ia-dica">
-            A IA analisa {usuario.admin ? 'todos os vendedores' : 'sua carteira'} e gera insights acionáveis para aumentar as vendas.
-          </p>
-          {msgIA && <p className={'ia-msg ' + msgIATipo}>{msgIA}</p>}
-          <button className="btn-primary ia-analisar-btn" onClick={analisar} disabled={analisando}>
-            {analisando ? '🤖 Analisando...' : '🤖 Analisar com IA'}
-          </button>
-          {resultadoIA && (
-            <div className="ia-resultado">
-              <h4>💡 Insights gerados</h4>
-              <pre className="ia-texto">{resultadoIA}</pre>
-            </div>
-          )}
-        </div>
-      )}
-
       <nav className="tabs">
         {abas.map((a) => (
           <button
@@ -165,6 +145,7 @@ function App() {
         {aba === 'vendas' && <Vendas usuario={usuario} />}
         {aba === 'orcamentos' && <Orcamentos usuario={usuario} />}
         {aba === 'dashboard' && <Dashboard usuario={usuario} />}
+        {aba === 'consultar' && <Consultar usuario={usuario} />}
         {aba === 'insights' && <Insights usuario={usuario} />}
       </main>
     </div>

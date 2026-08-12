@@ -4,77 +4,83 @@ import { join, dirname } from 'path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, readdirSync, statSync, unlinkSync } from 'fs'
 import bcrypt from 'bcryptjs'
 
+// ============================================================
+// CAMINHO FIXO DOS DADOS (rede)
+// ============================================================
+// Trave o caminho aqui. Todos os computadores usarão esta pasta.
+// Para trocar, edite apenas esta linha.
+var CAMINHO_FIXO = 'U:\\DADOS DO APP\\dados.json'
+
 var CONFIG_DIR = join(app.getPath('userData'), 'config')
 var CONFIG_FILE = join(CONFIG_DIR, 'config.json')
 var PADRAO_DIR = join(app.getPath('userData'), 'dados')
-var PADRAO_FILE = join(PADRAO_DIR, 'dados.json')
+var PADRAO_FILE = PADRAO_DIR + '\dados.json'
 
 // Retenção de backups (fixa conforme pedido)
 var RETER_VENDEDOR = 2
 var RETER_GERAIS = 2
 
 function lerCaminhoConfig() {
-  try {
-    if (existsSync(CONFIG_FILE)) {
-      var cfg = JSON.parse(readFileSync(CONFIG_FILE, 'utf-8'))
-      if (cfg.dataFile) return cfg.dataFile
-    }
-  } catch (err) {
-    console.error('Erro ao ler config:', err)
-  }
-  return PADRAO_FILE
+  // SEMPRE usa o caminho fixo da rede — ignora config.json
+  return CAMINHO_FIXO
 }
-
 function salvarCaminhoConfig(dataFile) {
-  if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true })
-  writeFileSync(CONFIG_FILE, JSON.stringify({ dataFile: dataFile }, null, 2), 'utf-8')
+  // Caminho é fixo — não faz nada
+  return
 }
-
 function garantirPastas(dir) {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
 }
-
 export function pastaDados() {
   return dirname(lerCaminhoConfig())
 }
-
 export function caminhoArquivo() {
   return lerCaminhoConfig()
 }
-
 export function alterarCaminho(novoArquivo) {
-  if (!novoArquivo || !novoArquivo.trim()) return { ok: false, erro: 'Caminho vazio' }
-  var caminho = novoArquivo.trim()
-  try {
-    var dir = dirname(caminho)
-    garantirPastas(dir)
-    salvarCaminhoConfig(caminho)
-    return { ok: true, caminho: caminho }
-  } catch (err) {
-    console.error('Erro ao alterar caminho:', err)
-    return { ok: false, erro: 'Sem permissao para acessar este caminho: ' + String(err) }
-  }
+  // Caminho é fixo — não permite alterar
+  return { ok: false, erro: 'O caminho de dados é fixo e não pode ser alterado.' }
 }
-
 function estruturaInicial() {
   var senhaHash = bcrypt.hashSync('admin123', 10)
   return {
     vendedores: [{ id: 'admin', nome: 'Administrador', usuario: 'admin', senhaHash: senhaHash, admin: true }],
     clientes: [],
     vendas: [],
+    orcamentos: [],
     orcamentosPerdidos: [],
     metaMensal: 100000
   }
 }
-
 function arquivoVendedores() {
   return join(pastaDados(), 'vendedores.json')
 }
-
+// Retorna true se existe um caminho de dados personalizado configurado (ex.: pasta de rede)
+function temCaminhoPersonalizado() {
+  try {
+    if (existsSync(CONFIG_FILE)) {
+      var cfg = JSON.parse(readFileSync(CONFIG_FILE, 'utf-8'))
+      return !!cfg.dataFile && cfg.dataFile !== PADRAO_FILE
+    }
+  } catch (err) {}
+  return false
+}
 export function carregarVendedores() {
   var arquivo = arquivoVendedores()
   try {
-    if (!existsSync(arquivo)) return []
+    if (!existsSync(arquivo)) {
+      // Caminho é FIXO — se o arquivo não existe, é a primeira execução.
+      // Cria o admin padrão (admin / admin123) do zero, já na pasta de rede.
+      // Se a rede estiver fora do ar, o writeFileSync lança erro e retorna [].
+      var inicial = estruturaInicial()
+      var res = salvarVendedores(inicial.vendedores)
+      if (res.ok) {
+        console.log('Sistema inicializado do zero com o usuário admin padrão.')
+        return inicial.vendedores
+      }
+      console.warn('Não foi possível criar o arquivo de vendedores. Verifique se a pasta de rede está acessível.')
+      return []
+    }
     var dados = JSON.parse(readFileSync(arquivo, 'utf-8'))
     if (Array.isArray(dados)) return dados
     return []
@@ -83,7 +89,6 @@ export function carregarVendedores() {
     return []
   }
 }
-
 export function salvarVendedores(vendedores) {
   var arquivo = arquivoVendedores()
   try {
@@ -95,16 +100,14 @@ export function salvarVendedores(vendedores) {
     return { ok: false, erro: 'Sem permissao para gravar vendedores: ' + String(err) }
   }
 }
-
 function arquivoVendedor(id) {
-  if (!id || id === 'admin') return null
+  if (!id) return null
+  // Admin também tem arquivo próprio (vendedor_admin.json) para persistir seus dados
   return join(pastaDados(), 'vendedor_' + id + '.json')
 }
-
 function estruturaVendedor() {
-  return { clientes: [], vendas: [], orcamentosPerdidos: [] }
+  return { clientes: [], vendas: [], orcamentos: [], orcamentosPerdidos: [] }
 }
-
 export function carregarDadosVendedor(id) {
   var arquivo = arquivoVendedor(id)
   if (!arquivo) return estruturaVendedor()
@@ -114,6 +117,7 @@ export function carregarDadosVendedor(id) {
     return {
       clientes: dados.clientes || [],
       vendas: dados.vendas || [],
+      orcamentos: dados.orcamentos || [],
       orcamentosPerdidos: dados.orcamentosPerdidos || []
     }
   } catch (err) {
@@ -121,7 +125,6 @@ export function carregarDadosVendedor(id) {
     return estruturaVendedor()
   }
 }
-
 export function salvarDadosVendedor(id, dados) {
   var arquivo = arquivoVendedor(id)
   if (!arquivo) return { ok: true }
@@ -134,7 +137,6 @@ export function salvarDadosVendedor(id, dados) {
     return { ok: false, erro: 'Sem permissao para gravar: ' + String(err) }
   }
 }
-
 export function migrarDadosAntigos() {
   var antigo = lerCaminhoConfig()
   if (!existsSync(antigo)) return
@@ -164,6 +166,11 @@ export function migrarDadosAntigos() {
       if (!porVendedor[vid]) porVendedor[vid] = estruturaVendedor()
       porVendedor[vid].vendas.push(v)
     })
+    ;(dados.orcamentos || []).forEach(function (o) {
+      var vid = o.vendedorId || 'admin'
+      if (!porVendedor[vid]) porVendedor[vid] = estruturaVendedor()
+      porVendedor[vid].orcamentos.push(o)
+    })
     ;(dados.orcamentosPerdidos || []).forEach(function (o) {
       var vid = o.vendedorId || 'admin'
       if (!porVendedor[vid]) porVendedor[vid] = estruturaVendedor()
@@ -179,36 +186,33 @@ export function migrarDadosAntigos() {
     console.error('Falha na migracao (ignorada):', err)
   }
 }
-
 export function carregarVisaoGerente() {
   var vendedores = carregarVendedores()
   var clientes = []
   var vendas = []
+  var orcamentos = []
   var orcamentosPerdidos = []
   vendedores.forEach(function (v) {
     var d = carregarDadosVendedor(v.id)
     clientes = clientes.concat(d.clientes)
     vendas = vendas.concat(d.vendas)
+    orcamentos = orcamentos.concat(d.orcamentos)
     orcamentosPerdidos = orcamentosPerdidos.concat(d.orcamentosPerdidos)
   })
-  return { vendedores: vendedores, clientes: clientes, vendas: vendas, orcamentosPerdidos: orcamentosPerdidos, metaMensal: 100000 }
+  return { vendedores: vendedores, clientes: clientes, vendas: vendas, orcamentos: orcamentos, orcamentosPerdidos: orcamentosPerdidos, metaMensal: 100000 }
 }
-
 // ============================================================
 // BACKUP — por vendedor (últimos 2) + geral (sempre 2)
 // ============================================================
-
 function stampData() {
   var agora = new Date()
   var p = function (n) { return String(n).padStart(2, '0') }
   return String(agora.getFullYear()) + '-' + p(agora.getMonth() + 1) + '-' + p(agora.getDate()) +
     '_' + p(agora.getHours()) + '-' + p(agora.getMinutes()) + '-' + p(agora.getSeconds())
 }
-
 function pastaBackups() {
   return join(pastaDados(), 'backups')
 }
-
 export function carregarConfigBackup() {
   try {
     if (existsSync(CONFIG_FILE)) {
@@ -220,7 +224,6 @@ export function carregarConfigBackup() {
   }
   return { horario: '19:00' }
 }
-
 export function salvarConfigBackup(config) {
   try {
     if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true })
@@ -236,7 +239,6 @@ export function salvarConfigBackup(config) {
     return { ok: false, erro: 'Erro ao salvar configuração de backup: ' + String(err) }
   }
 }
-
 // Mantém só os N arquivos mais recentes de um prefixo
 function limparBackupsPorPrefixo(prefixo, manter) {
   try {
@@ -255,7 +257,6 @@ function limparBackupsPorPrefixo(prefixo, manter) {
     console.error('Erro ao limpar backups antigos:', err)
   }
 }
-
 // Lista arquivos de um prefixo (mais recente primeiro)
 function listarPorPrefixo(prefixo) {
   try {
@@ -274,7 +275,6 @@ function listarPorPrefixo(prefixo) {
     return []
   }
 }
-
 // Cria: 1 backup por vendedor + 1 backup geral, e aplica a retenção (2 + 2)
 export function fazerBackup() {
   try {
@@ -282,17 +282,14 @@ export function fazerBackup() {
     var backupDir = pastaBackups()
     garantirPastas(backupDir)
     var stamp = stampData()
-
     // 1) Backup individual de cada vendedor
     var vendedores = carregarVendedores()
     vendedores.forEach(function (v) {
-      if (v.id === 'admin') return
       var dados = carregarDadosVendedor(v.id)
       var insights = carregarEstadoInsights(v.id)
       var nome = 'backup_vendedor_' + v.id + '_' + stamp + '.json'
       writeFileSync(join(backupDir, nome), JSON.stringify(Object.assign({}, dados, { insights: insights }), null, 2), 'utf-8')
     })
-
     // 2) Backup geral (tudo junto)
     var conteudo = {}
     readdirSync(dir).filter(function (f) { return f.endsWith('.json') && f !== 'backups' }).forEach(function (f) {
@@ -301,13 +298,11 @@ export function fazerBackup() {
       } catch (e) {}
     })
     writeFileSync(join(backupDir, 'geral_' + stamp + '.json'), JSON.stringify(conteudo, null, 2), 'utf-8')
-
     // 3) Retenção: últimos 2 por vendedor e 2 gerais
     vendedores.forEach(function (v) {
-      if (v.id !== 'admin') limparBackupsPorPrefixo('backup_vendedor_' + v.id + '_', RETER_VENDEDOR)
+      limparBackupsPorPrefixo('backup_vendedor_' + v.id + '_', RETER_VENDEDOR)
     })
     limparBackupsPorPrefixo('geral_', RETER_GERAIS)
-
     console.log('Backup criado: ' + vendedores.length + ' por vendedor + 1 geral (' + stamp + ')')
     return { ok: true }
   } catch (err) {
@@ -315,17 +310,14 @@ export function fazerBackup() {
     return { ok: false, erro: 'Falha ao criar backup: ' + String(err) }
   }
 }
-
 // Lista os backups de um vendedor específico
 export function listarBackupsVendedor(id) {
   return listarPorPrefixo('backup_vendedor_' + id + '_')
 }
-
 // Lista os backups gerais
 export function listarBackupsGerais() {
   return listarPorPrefixo('geral_')
 }
-
 // Restaura o backup de um vendedor específico (só os dados dele)
 export function restaurarBackupVendedor(id, nome) {
   try {
@@ -339,6 +331,7 @@ export function restaurarBackupVendedor(id, nome) {
     salvarDadosVendedor(id, {
       clientes: dados.clientes || [],
       vendas: dados.vendas || [],
+      orcamentos: dados.orcamentos || [],
       orcamentosPerdidos: dados.orcamentosPerdidos || []
     })
     if (dados.insights) salvarEstadoInsights(id, dados.insights)
@@ -349,7 +342,6 @@ export function restaurarBackupVendedor(id, nome) {
     return { ok: false, erro: 'Falha ao restaurar backup: ' + String(err) }
   }
 }
-
 // Restaura o backup geral (todos os arquivos de dados)
 export function restaurarBackupGeral(nome) {
   try {
@@ -372,7 +364,6 @@ export function restaurarBackupGeral(nome) {
     return { ok: false, erro: 'Falha ao restaurar backup: ' + String(err) }
   }
 }
-
 // (Compatibilidade) Lista todos os backups existentes
 export function listarBackups() {
   try {
@@ -391,11 +382,9 @@ export function listarBackups() {
     return []
   }
 }
-
 // ============================================================
 // CHAVE DA API DO GEMINI (salva no config.json, por máquina)
 // ============================================================
-
 export function carregarChaveIA() {
   try {
     if (existsSync(CONFIG_FILE)) {
@@ -407,7 +396,6 @@ export function carregarChaveIA() {
   }
   return ''
 }
-
 export function salvarChaveIA(chave) {
   try {
     if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true })
@@ -423,7 +411,6 @@ export function salvarChaveIA(chave) {
     return { ok: false, erro: 'Erro ao salvar a chave: ' + String(err) }
   }
 }
-
 // Estado de insights (visto/tratado/adiado) - salvo no arquivo de cada vendedor
 export function carregarEstadoInsights(id) {
   var arquivo = arquivoVendedor(id)
@@ -436,7 +423,6 @@ export function carregarEstadoInsights(id) {
     return { vistos: [], tratados: [], adiados: {} }
   }
 }
-
 export function salvarEstadoInsights(id, estado) {
   var arquivo = arquivoVendedor(id)
   if (!arquivo) return { ok: true }

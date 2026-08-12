@@ -1,24 +1,56 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { confirmar } from '../utils/confirmar'
+import { fmtValor, fmtData, MESES_NOME, dataLocalISO, mascaraMoeda, moedaParaMascara, parseMoeda } from '../utils/format'
+import { calcularMeta } from '../utils/financeiro'
 
 const formVazio = () => ({
   clienteId: '',
   buscaCliente: '',
-  produtos: '',
-  valor: '',
-  concorrente: '',
-  motivo: '',
-  observacao: '',
-  data: new Date().toISOString().slice(0, 10)
+  envio: '',
+  pedidoInsumos: '',
+  valorInsumos: '',
+  pedidoEquipamento: '',
+  valorEquipamento: '',
+  frete: '',
+  data: dataLocalISO(),
+  prazoValidade: '',
+  observacao: ''
 })
 
-function Orcamentos({ usuario }) {
+const STATUS_META = {
+  aguardando: { label: '⏳ Aguardando', classe: 'status-aguardando' },
+  aprovado: { label: '✅ Aprovado', classe: 'status-aprovado' },
+  recusado: { label: '❌ Recusado', classe: 'status-recusado' }
+}
+
+export default function Orcamentos({ usuario }) {
+  const hoje = new Date()
+  const anoAtual = hoje.getFullYear()
+  const mesAtual = hoje.getMonth() + 1
   const [orcamentos, setOrcamentos] = useState([])
   const [clientes, setClientes] = useState([])
   const [vendedores, setVendedores] = useState([])
+  const [filtroAno, setFiltroAno] = useState(anoAtual)
+  const [filtroMes, setFiltroMes] = useState(mesAtual)
   const [filtroVendedor, setFiltroVendedor] = useState('todos')
   const [form, setForm] = useState(formVazio())
+  const [editando, setEditando] = useState(null)
   const [mostrarSugestoes, setMostrarSugestoes] = useState(false)
-
+  const [erro, setErro] = useState('')
+  // Modal de recusa
+  const [recusando, setRecusando] = useState(null)
+  const [recusaForm, setRecusaForm] = useState({ motivo: '', concorrente: '', observacao: '' })
+  // Modal de aprovação (novos números de pedido)
+  const [aprovando, setAprovando] = useState(null)
+  const [aprovacaoForm, setAprovacaoForm] = useState({ pedidoInsumos: '', pedidoEquipamento: '' })
+  // ===== NOVO: feedback de sucesso (toast) =====
+  const [aviso, setAviso] = useState('')
+  const avisoTimer = useRef(null)
+  const mostrarAviso = (msg) => {
+    setAviso(msg)
+    if (avisoTimer.current) clearTimeout(avisoTimer.current)
+    avisoTimer.current = setTimeout(() => setAviso(''), 3000)
+  }
   useEffect(() => {
     const vendedorId = usuario.admin ? null : usuario.id
     window.api.listarOrcamentos(vendedorId).then(setOrcamentos)
@@ -27,11 +59,8 @@ function Orcamentos({ usuario }) {
       window.api.listarVendedores().then(setVendedores)
     }
   }, [usuario])
-
   const clientePorId = (id) => clientes.find((c) => c.id === id)
   const vendedorPorId = (id) => vendedores.find((v) => v.id === id)
-
-  // Autocomplete de cliente
   const sugestoes = useMemo(() => {
     const busca = form.buscaCliente.trim().toLowerCase()
     if (!busca || form.clienteId) return []
@@ -44,14 +73,36 @@ function Orcamentos({ usuario }) {
       })
       .slice(0, 8)
   }, [clientes, form.buscaCliente, form.clienteId])
-
-  // Filtra por vendedor
+  const anosDisponiveis = useMemo(() => {
+    const set = new Set(orcamentos.map((o) => (o.data || '').slice(0, 4)))
+    set.add(String(anoAtual))
+    return [...set].sort().reverse()
+  }, [orcamentos, anoAtual])
+  const mesesDisponiveis = useMemo(() => {
+    const set = new Set()
+    for (const o of orcamentos) {
+      const d = o.data || ''
+      if (filtroAno === 'todos' || d.slice(0, 4) === String(filtroAno)) {
+        const m = Number(d.slice(5, 7))
+        if (m >= 1 && m <= 12) set.add(m)
+      }
+    }
+    if (filtroAno === 'todos' || filtroAno === anoAtual) set.add(mesAtual)
+    return [...set].sort((a, b) => a - b)
+  }, [orcamentos, filtroAno, anoAtual, mesAtual])
   const orcamentosFiltrados = useMemo(() => {
-    if (filtroVendedor === 'todos') return orcamentos
-    return orcamentos.filter((o) => o.vendedorId === filtroVendedor)
-  }, [orcamentos, filtroVendedor])
-
-  // NOVO SEMPRE NO TOPO: ordena por data desc; empates mantêm o mais recente primeiro
+    let lista = orcamentos
+    if (filtroAno !== 'todos') {
+      lista = lista.filter((o) => (o.data || '').slice(0, 4) === String(filtroAno))
+    }
+    if (filtroMes !== 'todos') {
+      lista = lista.filter((o) => Number((o.data || '').slice(5, 7)) === filtroMes)
+    }
+    if (filtroVendedor !== 'todos') {
+      lista = lista.filter((o) => o.vendedorId === filtroVendedor)
+    }
+    return lista
+  }, [orcamentos, filtroAno, filtroMes, filtroVendedor])
   const ordenados = useMemo(() => {
     return [...orcamentosFiltrados].sort((a, b) => {
       const cmp = (b.data || '').localeCompare(a.data || '')
@@ -59,186 +110,370 @@ function Orcamentos({ usuario }) {
       return String(b.id || '').localeCompare(String(a.id || ''))
     })
   }, [orcamentosFiltrados])
-
+  const contadores = useMemo(() => ({
+    aguardando: orcamentos.filter((o) => o.status === 'aguardando').length,
+    aprovado: orcamentos.filter((o) => o.status === 'aprovado').length,
+    recusado: orcamentos.filter((o) => o.status === 'recusado').length
+  }), [orcamentos])
+  // Total aguardando agora soma o VALOR DA META (pedido − frete)
+  const totalAguardando = orcamentosFiltrados
+    .filter((o) => o.status === 'aguardando')
+    .reduce((soma, o) => soma + calcularMeta(o), 0)
   function escolherCliente(c) {
     setForm((f) => ({ ...f, clienteId: c.id, buscaCliente: '' }))
     setMostrarSugestoes(false)
   }
-
   function limparCliente() {
     setForm((f) => ({ ...f, clienteId: '', buscaCliente: '' }))
   }
-
+  function abrirNovo() {
+    setEditando(null)
+    setErro('')
+    setForm(formVazio())
+  }
+  function abrirEdicao(o) {
+    setEditando(o)
+    setErro('')
+    setForm({
+      clienteId: o.clienteId || '',
+      buscaCliente: '',
+      envio: o.envio || '',
+      pedidoInsumos: o.pedidoInsumos || '',
+      valorInsumos: o.valorInsumos != null ? moedaParaMascara(o.valorInsumos) : '',
+      pedidoEquipamento: o.pedidoEquipamento || '',
+      valorEquipamento: o.valorEquipamento != null ? moedaParaMascara(o.valorEquipamento) : '',
+      frete: o.frete != null ? String(o.frete) : '',
+      data: o.data || dataLocalISO(),
+      prazoValidade: o.prazoValidade || '',
+      observacao: o.observacao || ''
+    })
+  }
+  function cancelarEdicao() {
+    setEditando(null)
+    setForm(formVazio())
+  }
   async function salvar(e) {
     e.preventDefault()
-    if (!form.clienteId) return
-    const res = await window.api.criarOrcamento({
+    setErro('')
+    if (!form.clienteId) {
+      setErro('Selecione um cliente para o orçamento.')
+      return
+    }
+    const payload = {
       clienteId: form.clienteId,
-      vendedorId: usuario.id,
-      produtos: form.produtos,
-      valor: form.valor || 0,
-      concorrente: form.concorrente,
-      motivo: form.motivo,
-      observacao: form.observacao,
-      data: form.data
-    })
-    if (res.ok) {
-      // NOVO NO TOPO da lista
-      setOrcamentos((prev) => [res.orcamento, ...prev])
-      setForm(formVazio())
-      setMostrarSugestoes(false)
+      envio: form.envio,
+      pedidoInsumos: form.pedidoInsumos,
+      // ===== NOVO: converte a máscara de volta para número =====
+      valorInsumos: parseMoeda(form.valorInsumos),
+      pedidoEquipamento: form.pedidoEquipamento,
+      valorEquipamento: parseMoeda(form.valorEquipamento),
+      frete: form.frete,
+      data: form.data,
+      prazoValidade: form.prazoValidade,
+      observacao: form.observacao
+    }
+    if (editando) {
+      const res = await window.api.atualizarOrcamento({ ...editando, ...payload })
+      if (res.ok) {
+        setOrcamentos((prev) => prev.map((x) => (x.id === editando.id ? { ...x, ...payload } : x)))
+        cancelarEdicao()
+        // ===== NOVO: feedback de sucesso =====
+        mostrarAviso('✅ Orçamento atualizado com sucesso!')
+      } else {
+        setErro(res.erro || 'Erro ao atualizar o orçamento.')
+      }
+    } else {
+      const res = await window.api.criarOrcamento({
+        ...payload,
+        vendedorId: usuario.id,
+        status: 'aguardando'
+      })
+      if (res.ok) {
+        setOrcamentos((prev) => [res.orcamento, ...prev])
+        setForm(formVazio())
+        setMostrarSugestoes(false)
+        // ===== NOVO: feedback de sucesso =====
+        mostrarAviso('✅ Orçamento registrado com sucesso!')
+      } else {
+        setErro(res.erro || 'Erro ao registrar o orçamento.')
+      }
     }
   }
-
-  async function deletar(id) {
-    const confirmado = confirm('Excluir este orçamento?')
-    window.api.focarJanela()
-    if (!confirmado) return
-    await window.api.deletarOrcamento(id)
-    setOrcamentos((prev) => prev.filter((o) => o.id !== id))
+  // Abre o modal de aprovação pedindo o(s) novo(s) número(s) de pedido
+  function abrirAprovacao(o) {
+    setAprovando(o)
+    setAprovacaoForm({ pedidoInsumos: '', pedidoEquipamento: '' })
+    setErro('')
   }
-
-  // Formatação de valor SEMPRE completa (com 2 casas decimais)
-  const fmtValor = (v) =>
-    Number(v || 0).toLocaleString('pt-BR', {
-      style: 'currency',
-      currency: 'BRL',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
+  async function confirmarAprovacao(e) {
+    e.preventDefault()
+    if (!aprovando) return
+    const pi = aprovacaoForm.pedidoInsumos.trim()
+    const pe = aprovacaoForm.pedidoEquipamento.trim()
+    // Pelo menos um dos dois precisa ser preenchido
+    if (!pi && !pe) {
+      setErro('Informe ao menos o Ped. Insumos ou o Ped. Equip. para aprovar.')
+      return
+    }
+    const res = await window.api.aprovarOrcamento(aprovando.id, {
+      pedidoInsumos: pi,
+      pedidoEquipamento: pe
     })
-
-  const fmtData = (d) => {
-    if (!d) return ''
-    const [ano, mes, dia] = d.split('-')
-    return `${dia}/${mes}/${ano}`
+    if (res.ok) {
+      setOrcamentos((prev) =>
+        prev.map((x) =>
+          x.id === aprovando.id
+            ? {
+                ...x,
+                status: 'aprovado',
+                pedidoFinalInsumos: pi,
+                pedidoFinalEquipamento: pe
+              }
+            : x
+        )
+      )
+      setAprovando(null)
+      // ===== NOVO: feedback de sucesso =====
+      mostrarAviso('✅ Orçamento aprovado e importado para Vendas!')
+    } else {
+      setErro(res.erro || 'Erro ao aprovar orçamento.')
+      setAprovando(null)
+    }
   }
-
-  const totalPerdido = orcamentosFiltrados.reduce((soma, o) => soma + Number(o.valor || 0), 0)
-
+  function abrirRecusa(o) {
+    setRecusando(o)
+    setRecusaForm({ motivo: '', concorrente: '', observacao: '' })
+  }
+  async function confirmarRecusa(e) {
+    e.preventDefault()
+    if (!recusando) return
+    const res = await window.api.recusarOrcamento(recusando.id, recusaForm)
+    if (res.ok) {
+      setOrcamentos((prev) =>
+        prev.map((x) =>
+          x.id === recusando.id
+            ? {
+                ...x,
+                status: 'recusado',
+                motivo: recusaForm.motivo,
+                concorrente: recusaForm.concorrente,
+                observacaoRecusa: recusaForm.observacao
+              }
+            : x
+        )
+      )
+      setRecusando(null)
+      // ===== NOVO: feedback de sucesso =====
+      mostrarAviso('❌ Orçamento recusado.')
+    } else {
+      setErro(res.erro || 'Erro ao recusar orçamento.')
+      setRecusando(null)
+    }
+  }
+  async function deletar(o) {
+    // ===== NOVO: usa o confirmar do utils (consistente com Clientes/Vendas) =====
+    const confirmado = confirmar('Excluir este orçamento?')
+    if (!confirmado) return
+    await window.api.deletarOrcamento(o.id)
+    setOrcamentos((prev) => prev.filter((x) => x.id !== o.id))
+    // ===== NOVO: feedback de sucesso =====
+    mostrarAviso('🗑️ Orçamento excluído.')
+  }
   return (
     <div className="orcamentos">
+      {/* ===== NOVO: toast de sucesso ===== */}
+      {aviso && <div className="toast-sucesso">{aviso}</div>}
       <div className="section-head">
-        <h2>Orçamentos Perdidos</h2>
-        <span className="total-badge">Total perdido: {fmtValor(totalPerdido)}</span>
+        <h2>Orçamentos</h2>
+        <span className="total-badge">Total aguardando (Meta): {fmtValor(totalAguardando)}</span>
       </div>
-
-      {usuario.admin && (
-        <div className="filtro-vendedor">
+      {/* Contadores no topo */}
+      <div className="orcamento-contadores">
+        <span className={'badge ' + STATUS_META.aguardando.classe}>⏳ Aguardando: {contadores.aguardando}</span>
+        <span className={'badge ' + STATUS_META.aprovado.classe}>✅ Aprovados: {contadores.aprovado}</span>
+        <span className={'badge ' + STATUS_META.recusado.classe}>❌ Recusados: {contadores.recusado}</span>
+      </div>
+      {/* Filtros */}
+      <div className="filtros">
+        <label>
+          Ano
+          <select
+            value={filtroAno}
+            onChange={(e) => setFiltroAno(e.target.value === 'todos' ? 'todos' : Number(e.target.value))}
+          >
+            <option value="todos">Todos</option>
+            {anosDisponiveis.map((a) => (
+              <option key={a} value={a}>{a}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Mês
+          <select
+            value={filtroMes}
+            onChange={(e) => setFiltroMes(e.target.value === 'todos' ? 'todos' : Number(e.target.value))}
+          >
+            <option value="todos">Todos os meses</option>
+            {mesesDisponiveis.map((m) => (
+              <option key={m} value={m}>{MESES_NOME[m - 1]}</option>
+            ))}
+          </select>
+        </label>
+        {usuario.admin && (
           <label>
-            Filtrar por vendedor
+            Vendedor
             <select value={filtroVendedor} onChange={(e) => setFiltroVendedor(e.target.value)}>
-              <option value="todos">Todos os vendedores</option>
+              <option value="todos">Todos</option>
               {vendedores.map((v) => (
                 <option key={v.id} value={v.id}>{v.nome}</option>
               ))}
             </select>
           </label>
-        </div>
-      )}
-
+        )}
+      </div>
       {/* Formulário */}
       <form className="orcamento-form" onSubmit={salvar}>
-        <h3>Novo Orçamento Perdido</h3>
-
-        <label>
-          Cliente *
-          <div className="cliente-busca">
+        <div className="form-titulo-linha">
+          <h3>{editando ? 'Editar Orçamento' : 'Novo Orçamento'}</h3>
+          {erro && <p className="form-erro">{erro}</p>}
+        </div>
+        <div className="orcamento-form-grid">
+          {/* LINHA 1 — Cliente, Envio, Data, Válido até */}
+          <label className="campo-cliente">
+            Cliente *
+            <div className="cliente-busca">
+              <input
+                value={form.clienteId ? (clientePorId(form.clienteId)?.nome || '') : form.buscaCliente}
+                onChange={(e) => {
+                  setForm((f) => ({ ...f, buscaCliente: e.target.value, clienteId: '' }))
+                  setMostrarSugestoes(true)
+                }}
+                onFocus={() => setMostrarSugestoes(true)}
+                onBlur={() => setTimeout(() => setMostrarSugestoes(false), 150)}
+                placeholder="Digite o nome ou ID do cliente..."
+              />
+              {form.clienteId && (
+                <button type="button" className="btn-limpar" onClick={limparCliente}>✕</button>
+              )}
+              {mostrarSugestoes && sugestoes.length > 0 && (
+                <div className="sugestoes">
+                  {sugestoes.map((c) => (
+                    <button
+                      type="button"
+                      key={c.id}
+                      onMouseDown={(e) => {
+                        e.preventDefault()
+                        escolherCliente(c)
+                      }}
+                    >
+                      <span>#{c.codigo} {c.nome}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </label>
+          <label>
+            Envio
+            <select
+              value={form.envio}
+              onChange={(e) => setForm({ ...form, envio: e.target.value })}
+              required
+            >
+              <option value="">Selecione o meio de envio</option>
+              <option value="WhatsApp">WhatsApp</option>
+              <option value="E-mail">E-mail</option>
+              <option value="Teams">Teams</option>
+              <option value="Plataforma">Plataforma</option>
+            </select>
+          </label>
+          <label>
+            Data
             <input
-              value={form.clienteId ? (clientePorId(form.clienteId)?.nome || '') : form.buscaCliente}
-              onChange={(e) => {
-                setForm((f) => ({ ...f, buscaCliente: e.target.value, clienteId: '' }))
-                setMostrarSugestoes(true)
-              }}
-              onFocus={() => setMostrarSugestoes(true)}
-              onBlur={() => setTimeout(() => setMostrarSugestoes(false), 150)}
-              placeholder="Digite o nome ou ID do cliente..."
+              type="date"
+              value={form.data}
+              onChange={(e) => setForm({ ...form, data: e.target.value })}
             />
-            {form.clienteId && (
-              <button type="button" className="btn-limpar" onClick={limparCliente}>✕</button>
+          </label>
+          <label>
+            Válido até
+            <input
+              type="date"
+              value={form.prazoValidade}
+              onChange={(e) => setForm({ ...form, prazoValidade: e.target.value })}
+            />
+          </label>
+          {/* LINHA 2 — Orçamentos e valores */}
+          <label>
+            Orc. Insumos
+            <input
+              value={form.pedidoInsumos}
+              onChange={(e) => setForm({ ...form, pedidoInsumos: e.target.value })}
+              placeholder="Nº do orçamento de insumos"
+            />
+          </label>
+          <label>
+            Valor Insumos
+            {/* ===== NOVO: máscara de moeda ===== */}
+            <input
+              inputMode="decimal"
+              value={form.valorInsumos}
+              onChange={(e) => setForm({ ...form, valorInsumos: mascaraMoeda(e.target.value) })}
+              placeholder="0,00"
+            />
+          </label>
+          <label>
+            Orc. Equip.
+            <input
+              value={form.pedidoEquipamento}
+              onChange={(e) => setForm({ ...form, pedidoEquipamento: e.target.value })}
+              placeholder="Nº do orçamento de equipamento"
+            />
+          </label>
+          <label>
+            Valor Equip.
+            {/* ===== NOVO: máscara de moeda ===== */}
+            <input
+              inputMode="decimal"
+              value={form.valorEquipamento}
+              onChange={(e) => setForm({ ...form, valorEquipamento: mascaraMoeda(e.target.value) })}
+              placeholder="0,00"
+            />
+          </label>
+          <label>
+            Frete
+            <input
+              value={form.frete}
+              onChange={(e) => setForm({ ...form, frete: e.target.value })}
+              placeholder="0,00 ou 10%"
+              title="Valor fixo (ex: 79,90) ou porcentagem do pedido (ex: 10%)"
+            />
+          </label>
+          {/* OBSERVAÇÃO — largura total */}
+          <label className="obs-label">
+            Observação
+            <input
+              value={form.observacao}
+              onChange={(e) => setForm({ ...form, observacao: e.target.value })}
+            />
+          </label>
+          {/* BOTÕES */}
+          <div className="orcamento-form-acoes">
+            <button type="submit" className="btn-primary">
+              {editando ? 'Salvar Alterações' : 'Registrar Orçamento'}
+            </button>
+            {editando && (
+              <button type="button" className="btn-secondary" onClick={cancelarEdicao}>Cancelar</button>
             )}
-            {mostrarSugestoes && sugestoes.length > 0 && (
-              <div className="sugestoes">
-                {sugestoes.map((c) => (
-                  <button
-                    type="button"
-                    key={c.id}
-                    onMouseDown={(e) => {
-                      e.preventDefault()
-                      escolherCliente(c)
-                    }}
-                  >
-                    <span>#{c.codigo} {c.nome}</span>
-                  </button>
-                ))}
-              </div>
+            {!editando && (
+              <button type="button" className="btn-secondary" onClick={abrirNovo}>Limpar</button>
             )}
           </div>
-        </label>
-
-        <label>
-          Produtos
-          <input
-            value={form.produtos}
-            onChange={(e) => setForm({ ...form, produtos: e.target.value })}
-            placeholder="Descrição dos produtos"
-          />
-        </label>
-
-        <label>
-          Valor
-          <input
-            type="number"
-            step="0.01"
-            min="0"
-            value={form.valor}
-            onChange={(e) => setForm({ ...form, valor: e.target.value })}
-            placeholder="0,00"
-          />
-        </label>
-
-        <label>
-          Concorrente
-          <input
-            value={form.concorrente}
-            onChange={(e) => setForm({ ...form, concorrente: e.target.value })}
-            placeholder="Concorrente que ganhou"
-          />
-        </label>
-
-        <label>
-          Motivo
-          <input
-            value={form.motivo}
-            onChange={(e) => setForm({ ...form, motivo: e.target.value })}
-            placeholder="Motivo da perda"
-          />
-        </label>
-
-        <label>
-          Observação
-          <input
-            value={form.observacao}
-            onChange={(e) => setForm({ ...form, observacao: e.target.value })}
-          />
-        </label>
-
-        <label>
-          Data
-          <input
-            type="date"
-            value={form.data}
-            onChange={(e) => setForm({ ...form, data: e.target.value })}
-          />
-        </label>
-
-        <div className="orcamento-form-acoes">
-          <button type="submit" className="btn-primary">Registrar Orçamento</button>
         </div>
       </form>
-
       {/* Tabela */}
       {ordenados.length === 0 ? (
-        <p className="empty">Nenhum orçamento perdido registrado.</p>
+        <p className="empty">Nenhum orçamento encontrado.</p>
       ) : (
         <div className="tabela-wrap">
           <table className="tabela">
@@ -247,32 +482,66 @@ function Orcamentos({ usuario }) {
                 <th>ID</th>
                 <th>Cliente</th>
                 {usuario.admin && <th>Vendedor</th>}
-                <th>Produtos</th>
-                <th>Valor</th>
-                <th>Concorrente</th>
-                <th>Motivo</th>
-                <th>Observação</th>
+                <th>Envio</th>
+                {/* ===== NOVO: colunas agrupadas (14 -> 10) ===== */}
+                <th>Insumos</th>
+                <th>Equip.</th>
+                <th>Frete</th>
+                <th>Valor Ped.</th>
                 <th>Data</th>
-                <th></th>
+                <th>Válido até</th>
+                <th>Ações</th>
               </tr>
             </thead>
             <tbody>
               {ordenados.map((o) => {
                 const cli = clientePorId(o.clienteId)
                 const vend = vendedorPorId(o.vendedorId)
+                const status = o.status || 'aguardando'
+                const st = STATUS_META[status] || STATUS_META.aguardando
+                // Infos extras de aprovação/recusa (movidas para a observação)
+                const infosExtras = []
+                if (o.status === 'aprovado') {
+                  if (o.pedidoFinalInsumos) infosExtras.push('Ped. Insumos: ' + o.pedidoFinalInsumos)
+                  if (o.pedidoFinalEquipamento) infosExtras.push('Ped. Equip.: ' + o.pedidoFinalEquipamento)
+                }
+                if (o.status === 'recusado') {
+                  if (o.motivo) infosExtras.push('Motivo: ' + o.motivo)
+                  if (o.concorrente) infosExtras.push('Concorrente: ' + o.concorrente)
+                  if (o.observacaoRecusa) infosExtras.push('Obs: ' + o.observacaoRecusa)
+                }
                 return (
-                  <tr key={o.id}>
+                  <tr key={o.id} className={'orc-status-' + status}>
                     <td className="rank">{cli ? cli.codigo : '-'}</td>
-                    <td>{cli ? cli.nome : '(cliente removido)'}</td>
+                    <td>
+                      <span className="orc-ponto" title={st.label} />
+                      {cli ? cli.nome : '(cliente removido)'}
+                    </td>
                     {usuario.admin && <td>{vend ? vend.nome : '-'}</td>}
-                    <td>{o.produtos}</td>
-                    <td>{fmtValor(o.valor)}</td>
-                    <td>{o.concorrente}</td>
-                    <td>{o.motivo}</td>
-                    <td className="obs-cell">{o.observacao}</td>
+                    <td>{o.envio || '—'}</td>
+                    {/* ===== NOVO: descrição + valor agrupados ===== */}
+                    <td className="venda-grupo">
+                      {o.pedidoInsumos && <span className="venda-desc">{o.pedidoInsumos}</span>}
+                      <span className="venda-valor">{fmtValor(o.valorInsumos)}</span>
+                    </td>
+                    <td className="venda-grupo">
+                      {o.pedidoEquipamento && <span className="venda-desc">{o.pedidoEquipamento}</span>}
+                      <span className="venda-valor">{fmtValor(o.valorEquipamento)}</span>
+                    </td>
+                    <td>{o.frete ? (String(o.frete).includes('%') ? o.frete : fmtValor(String(o.frete).replace(',', '.'))) : '—'}</td>
+                    <td className="valor-meta">{fmtValor(calcularMeta(o))}</td>
                     <td>{fmtData(o.data)}</td>
+                    <td>{fmtData(o.prazoValidade) || '—'}</td>
                     <td className="acoes">
-                        <button className="btn-link danger" onClick={() => deletar(o.id)} title="Excluir">🗑️</button>
+                      {o.status === 'aguardando' && (
+                        <>
+                          {/* ===== NOVO: botões com texto + tooltip ===== */}
+                          <button className="btn-acao" onClick={() => abrirEdicao(o)} title="Editar orçamento">✏️ Editar</button>
+                          <button className="btn-acao btn-acao-ok" onClick={() => abrirAprovacao(o)} title="Aprovar (importar para Vendas)">✅ Aprovar</button>
+                          <button className="btn-acao btn-acao-danger" onClick={() => abrirRecusa(o)} title="Recusar orçamento">❌ Recusar</button>
+                        </>
+                      )}
+                      <button className="btn-acao btn-acao-danger" onClick={() => deletar(o)} title="Excluir orçamento">🗑️ Excluir</button>
                     </td>
                   </tr>
                 )
@@ -281,8 +550,87 @@ function Orcamentos({ usuario }) {
           </table>
         </div>
       )}
+      {/* Modal de aprovação — pede o(s) novo(s) número(s) de pedido (MANTIDO) */}
+      {aprovando && (
+        <div className="modal-overlay" onClick={() => setAprovando(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Aprovar Orçamento</h3>
+            <p className="modal-sub">
+              {clientePorId(aprovando.clienteId)?.nome || '(cliente)'} · {fmtValor(Number(aprovando.valorInsumos) + Number(aprovando.valorEquipamento))}
+            </p>
+            <p className="modal-info">
+              Informe o número do pedido de insumos <strong>e/ou</strong> de equipamento que será importado para a aba <strong>Vendas</strong>. Preencha <strong>ao menos um</strong> dos dois.
+            </p>
+            <form onSubmit={confirmarAprovacao}>
+              <label>
+                Ped. Insumos
+                <input
+                  value={aprovacaoForm.pedidoInsumos}
+                  onChange={(e) => setAprovacaoForm({ ...aprovacaoForm, pedidoInsumos: e.target.value })}
+                  placeholder="Número do pedido de insumos"
+                  autoFocus
+                />
+              </label>
+              <label>
+                Ped. Equip.
+                <input
+                  value={aprovacaoForm.pedidoEquipamento}
+                  onChange={(e) => setAprovacaoForm({ ...aprovacaoForm, pedidoEquipamento: e.target.value })}
+                  placeholder="Número do pedido de equipamento"
+                />
+              </label>
+              {erro && <p className="form-erro">{erro}</p>}
+              <div className="modal-acoes">
+                <button type="button" className="btn-secondary" onClick={() => setAprovando(null)}>Cancelar</button>
+                <button type="submit" className="btn-primary">Confirmar Aprovação</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {/* Modal de recusa (MANTIDO) */}
+      {recusando && (
+        <div className="modal-overlay" onClick={() => setRecusando(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Recusar Orçamento</h3>
+            <p className="modal-sub">
+              {clientePorId(recusando.clienteId)?.nome || '(cliente)'} · {fmtValor(Number(recusando.valorInsumos) + Number(recusando.valorEquipamento))}
+            </p>
+            <form onSubmit={confirmarRecusa}>
+              <label>
+                Motivo da recusa
+                <input
+                  value={recusaForm.motivo}
+                  onChange={(e) => setRecusaForm({ ...recusaForm, motivo: e.target.value })}
+                  placeholder="Ex.: preço acima do orçamento do cliente"
+                  autoFocus
+                />
+              </label>
+              <label>
+                Concorrente
+                <input
+                  value={recusaForm.concorrente}
+                  onChange={(e) => setRecusaForm({ ...recusaForm, concorrente: e.target.value })}
+                  placeholder="Concorrente que ganhou (se houver)"
+                />
+              </label>
+              <label>
+                Observação
+                <textarea
+                  value={recusaForm.observacao}
+                  onChange={(e) => setRecusaForm({ ...recusaForm, observacao: e.target.value })}
+                  placeholder="Detalhes adicionais"
+                  rows={3}
+                />
+              </label>
+              <div className="modal-acoes">
+                <button type="button" className="btn-secondary" onClick={() => setRecusando(null)}>Cancelar</button>
+                <button type="submit" className="btn-danger">Confirmar Recusa</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
-
-export default Orcamentos

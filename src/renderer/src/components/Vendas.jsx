@@ -1,17 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { confirmar } from '../utils/confirmar'
-
-const MESES_NOME = [
-  'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
-  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
-]
-
-// Data local no formato YYYY-MM-DD (evita bug de fuso do toISOString)
-function dataLocalISO(d = new Date()) {
-  const mes = String(d.getMonth() + 1).padStart(2, '0')
-  const dia = String(d.getDate()).padStart(2, '0')
-  return `${d.getFullYear()}-${mes}-${dia}`
-}
+import { fmtValor, fmtData, MESES_NOME, dataLocalISO, mascaraMoeda, moedaParaMascara, parseMoeda } from '../utils/format'
+import { calcularMeta } from '../utils/financeiro'
 
 const formVazio = () => ({
   clienteId: '',
@@ -21,24 +11,10 @@ const formVazio = () => ({
   valorInsumos: '',
   pedidoEquipamento: '',
   valorEquipamento: '',
+  frete: '',
   data: dataLocalISO(),
   observacao: ''
 })
-
-const fmtValor = (v) =>
-  Number(v || 0).toLocaleString('pt-BR', {
-    style: 'currency',
-    currency: 'BRL',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  })
-
-const fmtData = (d) => {
-  if (!d) return ''
-  const m = String(d).match(/^(\d{4})-(\d{2})-(\d{2})/)
-  if (!m) return d
-  return `${m[3]}/${m[2]}/${m[1]}`
-}
 
 function Vendas({ usuario }) {
   const hoje = new Date()
@@ -54,7 +30,14 @@ function Vendas({ usuario }) {
   const [editando, setEditando] = useState(null)
   const [erro, setErro] = useState('')
   const [mostrarSugestoes, setMostrarSugestoes] = useState(false)
-
+  // ===== NOVO: feedback de sucesso (toast) =====
+  const [aviso, setAviso] = useState('')
+  const avisoTimer = useRef(null)
+  const mostrarAviso = (msg) => {
+    setAviso(msg)
+    if (avisoTimer.current) clearTimeout(avisoTimer.current)
+    avisoTimer.current = setTimeout(() => setAviso(''), 3000)
+  }
   useEffect(() => {
     const vendedorId = usuario.admin ? null : usuario.id
     window.api.listarVendas(vendedorId).then(setVendas)
@@ -63,10 +46,8 @@ function Vendas({ usuario }) {
       window.api.listarVendedores().then(setVendedores)
     }
   }, [usuario])
-
   const clientePorId = (id) => clientes.find((c) => c.id === id)
   const vendedorPorId = (id) => vendedores.find((v) => v.id === id)
-
   const sugestoes = useMemo(() => {
     const busca = form.buscaCliente.trim().toLowerCase()
     if (!busca || form.clienteId) return []
@@ -79,13 +60,11 @@ function Vendas({ usuario }) {
       })
       .slice(0, 8)
   }, [clientes, form.buscaCliente, form.clienteId])
-
   const anosDisponiveis = useMemo(() => {
     const set = new Set(vendas.map((v) => (v.data || '').slice(0, 4)))
     set.add(String(anoAtual))
     return [...set].sort().reverse()
   }, [vendas, anoAtual])
-
   const mesesDisponiveis = useMemo(() => {
     const set = new Set()
     for (const v of vendas) {
@@ -98,7 +77,6 @@ function Vendas({ usuario }) {
     if (filtroAno === 'todos' || filtroAno === anoAtual) set.add(mesAtual)
     return [...set].sort((a, b) => a - b)
   }, [vendas, filtroAno, anoAtual, mesAtual])
-
   const vendasFiltradas = useMemo(() => {
     let lista = vendas
     if (filtroAno !== 'todos') {
@@ -112,7 +90,6 @@ function Vendas({ usuario }) {
     }
     return lista
   }, [vendas, filtroAno, filtroMes, filtroVendedor])
-
   const vendasOrdenadas = useMemo(() => {
     return [...vendasFiltradas].sort((a, b) => {
       const cmp = (b.data || '').localeCompare(a.data || '')
@@ -120,22 +97,30 @@ function Vendas({ usuario }) {
       return String(b.id || '').localeCompare(String(a.id || ''))
     })
   }, [vendasFiltradas])
-
+  // ===== NOVO: totais para o rodapé =====
+  const totais = useMemo(() => {
+    let somaInsumos = 0
+    let somaEquip = 0
+    let somaPed = 0
+    for (const v of vendasFiltradas) {
+      somaInsumos += Number(v.valorInsumos || 0)
+      somaEquip += Number(v.valorEquipamento || 0)
+      somaPed += calcularMeta(v)
+    }
+    return { somaInsumos, somaEquip, somaPed }
+  }, [vendasFiltradas])
   function escolherCliente(c) {
     setForm((f) => ({ ...f, clienteId: c.id, buscaCliente: '' }))
     setMostrarSugestoes(false)
   }
-
   function limparCliente() {
     setForm((f) => ({ ...f, clienteId: '', buscaCliente: '' }))
   }
-
   function abrirNovo() {
     setEditando(null)
     setErro('')
     setForm(formVazio())
   }
-
   function abrirEdicao(v) {
     setEditando(v)
     setErro('')
@@ -144,19 +129,18 @@ function Vendas({ usuario }) {
       buscaCliente: '',
       envio: v.envio || '',
       pedidoInsumos: v.pedidoInsumos || '',
-      valorInsumos: v.valorInsumos != null ? String(v.valorInsumos) : '',
+      valorInsumos: v.valorInsumos != null ? moedaParaMascara(v.valorInsumos) : '',
       pedidoEquipamento: v.pedidoEquipamento || '',
-      valorEquipamento: v.valorEquipamento != null ? String(v.valorEquipamento) : '',
+      valorEquipamento: v.valorEquipamento != null ? moedaParaMascara(v.valorEquipamento) : '',
+      frete: v.frete != null ? String(v.frete) : '',
       data: v.data || dataLocalISO(),
       observacao: v.observacao || ''
     })
   }
-
   function cancelarEdicao() {
     setEditando(null)
     setForm(formVazio())
   }
-
   async function salvar(e) {
     e.preventDefault()
     setErro('')
@@ -168,9 +152,11 @@ function Vendas({ usuario }) {
       clienteId: form.clienteId,
       envio: form.envio,
       pedidoInsumos: form.pedidoInsumos,
-      valorInsumos: Number(form.valorInsumos) || 0,
+      // ===== NOVO: converte a máscara de volta para número =====
+      valorInsumos: parseMoeda(form.valorInsumos),
       pedidoEquipamento: form.pedidoEquipamento,
-      valorEquipamento: Number(form.valorEquipamento) || 0,
+      valorEquipamento: parseMoeda(form.valorEquipamento),
+      frete: form.frete,
       data: form.data,
       observacao: form.observacao
     }
@@ -186,31 +172,31 @@ function Vendas({ usuario }) {
       )
       setMostrarSugestoes(false)
       cancelarEdicao()
+      // ===== NOVO: feedback de sucesso =====
+      mostrarAviso(editando ? '✅ Venda atualizada com sucesso!' : '✅ Venda registrada com sucesso!')
     } else {
       setErro(res.erro || 'Erro ao salvar a venda.')
     }
   }
-
   async function deletar(venda) {
     const id = typeof venda === 'object' && venda !== null ? venda.id : venda
     const confirmado = confirmar('Excluir esta venda?')
     if (!confirmado) return
     await window.api.deletarVenda(id)
     setVendas((prev) => prev.filter((v) => v.id !== id))
+    // ===== NOVO: feedback de sucesso =====
+    mostrarAviso('🗑️ Venda excluída.')
   }
-
-  const total = vendasFiltradas.reduce(
-    (soma, v) => soma + Number(v.valorInsumos || 0) + Number(v.valorEquipamento || 0),
-    0
-  )
-
+  // Total agora soma o VALOR DA META (pedido − frete), não o valor bruto
+  const total = vendasFiltradas.reduce((soma, v) => soma + calcularMeta(v), 0)
   return (
     <div className="vendas">
+      {/* ===== NOVO: toast de sucesso ===== */}
+      {aviso && <div className="toast-sucesso">{aviso}</div>}
       <div className="section-head">
         <h2>Registro de Vendas</h2>
-        <span className="total-badge">Total: {fmtValor(total)}</span>
+        <span className="total-badge">Total (Valor Ped.): {fmtValor(total)}</span>
       </div>
-
       {/* Filtros separados: Ano + Mês (com nome) + Vendedor */}
       <div className="filtros">
         <label>
@@ -249,7 +235,6 @@ function Vendas({ usuario }) {
           </label>
         )}
       </div>
-
       {/* Formulário — título e erro fora da linha de campos */}
       <form className="venda-form" onSubmit={salvar}>
         <div className="form-titulo-linha">
@@ -293,11 +278,17 @@ function Vendas({ usuario }) {
           </label>
           <label>
             Envio
-            <input
+            <select
               value={form.envio}
               onChange={(e) => setForm({ ...form, envio: e.target.value })}
-              placeholder="Tipo de envio"
-            />
+              required
+            >
+              <option value="">Selecione o meio de envio</option>
+              <option value="WhatsApp">WhatsApp</option>
+              <option value="E-mail">E-mail</option>
+              <option value="Teams">Teams</option>
+              <option value="Plataforma">Plataforma</option>
+            </select>
           </label>
           <label>
             Ped. Insumos
@@ -309,12 +300,11 @@ function Vendas({ usuario }) {
           </label>
           <label>
             Valor Insumos
+            {/* ===== NOVO: máscara de moeda ===== */}
             <input
-              type="number"
-              step="0.01"
-              min="0"
+              inputMode="decimal"
               value={form.valorInsumos}
-              onChange={(e) => setForm({ ...form, valorInsumos: e.target.value })}
+              onChange={(e) => setForm({ ...form, valorInsumos: mascaraMoeda(e.target.value) })}
               placeholder="0,00"
             />
           </label>
@@ -328,13 +318,21 @@ function Vendas({ usuario }) {
           </label>
           <label>
             Valor Equip.
+            {/* ===== NOVO: máscara de moeda ===== */}
             <input
-              type="number"
-              step="0.01"
-              min="0"
+              inputMode="decimal"
               value={form.valorEquipamento}
-              onChange={(e) => setForm({ ...form, valorEquipamento: e.target.value })}
+              onChange={(e) => setForm({ ...form, valorEquipamento: mascaraMoeda(e.target.value) })}
               placeholder="0,00"
+            />
+          </label>
+          <label>
+            Frete
+            <input
+              value={form.frete}
+              onChange={(e) => setForm({ ...form, frete: e.target.value })}
+              placeholder="0,00 ou 10%"
+              title="Valor fixo (ex: 79,90) ou porcentagem do pedido (ex: 10%)"
             />
           </label>
           <label>
@@ -364,7 +362,6 @@ function Vendas({ usuario }) {
           </div>
         </div>
       </form>
-
       {/* Tabela */}
       {vendasOrdenadas.length === 0 ? (
         <p className="empty">Nenhuma venda encontrada.</p>
@@ -377,12 +374,12 @@ function Vendas({ usuario }) {
                 <th>Cliente</th>
                 {usuario.admin && <th>Vendedor</th>}
                 <th>Envio</th>
-                <th>Ped. Insumos</th>
-                <th>Valor Insumos</th>
-                <th>Ped. Equip.</th>
-                <th>Valor Equip.</th>
+                {/* ===== NOVO: colunas agrupadas (13 -> 9) ===== */}
+                <th>Insumos</th>
+                <th>Equip.</th>
+                <th>Frete</th>
+                <th>Valor Ped.</th>
                 <th>Data</th>
-                <th>Observação</th>
                 <th>Ações</th>
               </tr>
             </thead>
@@ -396,20 +393,39 @@ function Vendas({ usuario }) {
                     <td>{cli ? cli.nome : '(cliente removido)'}</td>
                     {usuario.admin && <td>{vend ? vend.nome : '-'}</td>}
                     <td>{v.envio || '—'}</td>
-                    <td>{v.pedidoInsumos || '—'}</td>
-                    <td>{fmtValor(v.valorInsumos)}</td>
-                    <td>{v.pedidoEquipamento || '—'}</td>
-                    <td>{fmtValor(v.valorEquipamento)}</td>
+                    {/* ===== NOVO: descrição + valor agrupados ===== */}
+                    <td className="venda-grupo">
+                      {v.pedidoInsumos && <span className="venda-desc">{v.pedidoInsumos}</span>}
+                      <span className="venda-valor">{fmtValor(v.valorInsumos)}</span>
+                    </td>
+                    <td className="venda-grupo">
+                      {v.pedidoEquipamento && <span className="venda-desc">{v.pedidoEquipamento}</span>}
+                      <span className="venda-valor">{fmtValor(v.valorEquipamento)}</span>
+                    </td>
+                    <td>{v.frete ? (String(v.frete).includes('%') ? v.frete : fmtValor(String(v.frete).replace(',', '.'))) : '—'}</td>
+                    <td className="valor-meta">{fmtValor(calcularMeta(v))}</td>
                     <td>{fmtData(v.data)}</td>
-                    <td className="obs-cell">{v.observacao || '—'}</td>
                     <td className="acoes">
-                      <button className="btn-acao" onClick={() => abrirEdicao(v)} title="Editar">✏️</button>
-                      <button className="btn-acao btn-acao-danger" onClick={() => deletar(v)} title="Excluir">🗑️</button>
+                      {/* ===== NOVO: botões com texto + tooltip ===== */}
+                      <button className="btn-acao" onClick={() => abrirEdicao(v)} title="Editar venda">✏️ Editar</button>
+                      <button className="btn-acao btn-acao-danger" onClick={() => deletar(v)} title="Excluir venda">🗑️ Excluir</button>
                     </td>
                   </tr>
                 )
               })}
             </tbody>
+            {/* ===== NOVO: rodapé com totais ===== */}
+            <tfoot>
+              <tr>
+                <td colSpan={usuario.admin ? 4 : 3}>Totais</td>
+                <td className="valor-meta">{fmtValor(totais.somaInsumos)}</td>
+                <td className="valor-meta">{fmtValor(totais.somaEquip)}</td>
+                <td>—</td>
+                <td className="valor-meta">{fmtValor(totais.somaPed)}</td>
+                <td>—</td>
+                <td></td>
+              </tr>
+            </tfoot>
           </table>
         </div>
       )}

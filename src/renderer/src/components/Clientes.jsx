@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { confirmar } from '../utils/confirmar'
+import { fmtData, fmtDataHora as fmtDataHoraHist, parseData, fmtCnpj } from '../utils/format'
 import ClienteDetalhe from './ClienteDetalhe'
 
 const ROTULO_STATUS = {
@@ -7,6 +8,13 @@ const ROTULO_STATUS = {
   'atencao': 'Atenção',
   'inativo': 'Inativo',
   'sem-compra': 'Sem compras'
+}
+const ROTULOS_TIPO_HIST = {
+  ligacao: '📞 Liguei',
+  promocao: '🎁 Promoção',
+  visita: '📅 Visita agendada',
+  proposta: '📄 Proposta',
+  obs: '📝 Observação'
 }
 
 const formVazio = () => ({
@@ -24,14 +32,27 @@ function Clientes({ usuario }) {
   const [form, setForm] = useState(formVazio())
   const [buscaCidade, setBuscaCidade] = useState('')
   const [mostrarCidades, setMostrarCidades] = useState(false)
+  const [cidadeValida, setCidadeValida] = useState(false)
   const [consultandoCnpj, setConsultandoCnpj] = useState(false)
   const [cnpjMsg, setCnpjMsg] = useState('')
   const [cnpjTipo, setCnpjTipo] = useState('')
+  const [cnpjTimer, setCnpjTimer] = useState(null)
   const [filtroStatus, setFiltroStatus] = useState(null)
   const [filtroAbc, setFiltroAbc] = useState(null)
   const [buscaNome, setBuscaNome] = useState('')
   const [clienteSelecionado, setClienteSelecionado] = useState(null)
-
+  // Histórico de interações (modal)
+  const [historicoCliente, setHistoricoCliente] = useState(null)
+  const [historicoLista, setHistoricoLista] = useState([])
+  const [historicoCarregando, setHistoricoCarregando] = useState(false)
+  // ===== NOVO: feedback de sucesso (toast) =====
+  const [aviso, setAviso] = useState('')
+  const avisoTimer = useRef(null)
+  const mostrarAviso = (msg) => {
+    setAviso(msg)
+    if (avisoTimer.current) clearTimeout(avisoTimer.current)
+    avisoTimer.current = setTimeout(() => setAviso(''), 3000)
+  }
   useEffect(() => {
     const vendedorId = usuario.admin ? null : usuario.id
     window.api.listarClientes(vendedorId).then(setClientes)
@@ -41,25 +62,21 @@ function Clientes({ usuario }) {
     }
     window.api.listarCidades().then(setCidades)
   }, [usuario])
-
+  useEffect(() => {
+    if (!historicoCliente) return
+    setHistoricoCarregando(true)
+    window.api
+      .historicoCliente(historicoCliente.id)
+      .then((res) => setHistoricoLista(Array.isArray(res) ? res : []))
+      .catch(() => setHistoricoLista([]))
+      .finally(() => setHistoricoCarregando(false))
+  }, [historicoCliente])
   const vendedorPorId = (id) => vendedores.find((v) => v.id === id)
-
-  // Converte "YYYY-MM-DD" em Date local (evita erro de fuso do new Date('YYYY-MM-DD'))
-  const parseData = (d) => {
-    if (!d) return null
-    const m = String(d).match(/^(\d{4})-(\d{2})-(\d{2})/)
-    if (!m) return null
-    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
-  }
-
-  // Filtra cidades do IBGE conforme o que foi digitado
   const cidadesFiltradas = useMemo(() => {
     const b = buscaCidade.trim().toLowerCase()
     if (!b) return []
     return cidades.filter((c) => c.nome.toLowerCase().includes(b)).slice(0, 8)
   }, [cidades, buscaCidade])
-
-  // Calcula indicadores (status, datas) E a curva ABC de cada cliente
   const clientesComIndicadores = useMemo(() => {
     const vendasPorCliente = {}
     const totalPorCliente = {}
@@ -73,13 +90,10 @@ function Clientes({ usuario }) {
     hoje.setHours(0, 0, 0, 0)
     const hojeMs = hoje.getTime()
     const DIA = 86400000
-
-    // Ranking por total gasto para calcular a curva ABC
     const ranking = Object.keys(totalPorCliente)
       .map((cid) => ({ id: cid, total: totalPorCliente[cid] }))
       .sort((a, b) => b.total - a.total)
     const totalClientesComCompra = ranking.length
-
     return clientes
       .map((c) => {
         const datas = (vendasPorCliente[c.id] || []).slice().sort()
@@ -92,7 +106,6 @@ function Clientes({ usuario }) {
           diasInativo = dUlt ? Math.max(0, Math.floor((hojeMs - dUlt.getTime()) / DIA)) : 0
           status = diasInativo <= 30 ? 'ativo' : diasInativo <= 90 ? 'atencao' : 'inativo'
         }
-        // Curva ABC: posição no ranking de quem comprou
         let abc = 'C'
         const pos = ranking.findIndex((r) => r.id === c.id)
         if (pos !== -1 && totalClientesComCompra > 0) {
@@ -102,25 +115,18 @@ function Clientes({ usuario }) {
         }
         return { ...c, primeiraCompra, ultimaCompra, diasInativo, status, abc, totalGasto: totalPorCliente[c.id] || 0 }
       })
-      // ORDENAÇÃO ALFABÉTICA POR NOME
       .sort((a, b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'))
   }, [clientes, vendas])
-
-  // Contagens por status para o painel
   const contagemStatus = useMemo(() => {
     const cont = { ativo: 0, atencao: 0, inativo: 0, 'sem-compra': 0 }
     for (const c of clientesComIndicadores) cont[c.status]++
     return cont
   }, [clientesComIndicadores])
-
-  // Contagens por curva ABC
   const contagemAbc = useMemo(() => {
     const cont = { A: 0, B: 0, C: 0 }
     for (const c of clientesComIndicadores) cont[c.abc]++
     return cont
   }, [clientesComIndicadores])
-
-  // Aplica os filtros: status + curva ABC + busca por nome
   const clientesFiltrados = useMemo(() => {
     let lista = clientesComIndicadores
     if (filtroStatus) lista = lista.filter((c) => c.status === filtroStatus)
@@ -129,20 +135,6 @@ function Clientes({ usuario }) {
     if (b) lista = lista.filter((c) => String(c.nome || '').toLowerCase().includes(b))
     return lista
   }, [clientesComIndicadores, filtroStatus, filtroAbc, buscaNome])
-
-  const fmtData = (d) => {
-    if (!d) return '—'
-    const m = String(d).match(/^(\d{4})-(\d{2})-(\d{2})/)
-    if (!m) return d
-    return `${m[3]}/${m[2]}/${m[1]}`
-  }
-
-  const fmtCnpj = (v) => {
-    const s = String(v || '').replace(/\D/g, '')
-    if (s.length !== 14) return v || '—'
-    return `${s.slice(0, 2)}.${s.slice(2, 5)}.${s.slice(5, 8)}/${s.slice(8, 12)}-${s.slice(12)}`
-  }
-
   async function consultarCnpj(cnpj) {
     setConsultandoCnpj(true)
     setCnpjMsg('')
@@ -158,17 +150,26 @@ function Clientes({ usuario }) {
       setCnpjTipo('erro')
     }
   }
-
+  function aoDigitarCnpj(v) {
+    setForm((f) => ({ ...f, cnpj: v }))
+    setCnpjMsg('')
+    setCnpjTipo('')
+    if (cnpjTimer) clearTimeout(cnpjTimer)
+    if (v.length === 14) {
+      const t = setTimeout(() => consultarCnpj(v), 300)
+      setCnpjTimer(t)
+    }
+  }
   function abrirNovo() {
     setEditando(null)
     setErro('')
     setForm(formVazio())
     setBuscaCidade('')
+    setCidadeValida(false)
     setCnpjMsg('')
     setCnpjTipo('')
     setMostrarForm(true)
   }
-
   function abrirEdicao(c) {
     setEditando(c)
     setErro('')
@@ -182,12 +183,12 @@ function Clientes({ usuario }) {
       segmento: c.segmento || ''
     })
     setBuscaCidade(c.cidade || '')
+    setCidadeValida(!!c.cidade)
     setCnpjMsg('')
     setCnpjTipo('')
     setMostrarForm(true)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
-
   async function salvar(e) {
     e.preventDefault()
     setErro('')
@@ -201,6 +202,10 @@ function Clientes({ usuario }) {
     )
     if (duplicado) {
       setErro(`Já existe um cliente com o ID ${codigo}.`)
+      return
+    }
+    if (form.cidade && !cidadeValida) {
+      setErro('Selecione a cidade clicando na lista de sugestões (não digite manualmente).')
       return
     }
     const payload = {
@@ -223,27 +228,26 @@ function Clientes({ usuario }) {
         editando ? prev.map((c) => (c.id === res.cliente.id ? res.cliente : c)) : [...prev, res.cliente]
       )
       setMostrarForm(false)
+      // ===== NOVO: feedback de sucesso =====
+      mostrarAviso(editando ? '✅ Cliente atualizado com sucesso!' : '✅ Cliente cadastrado com sucesso!')
     } else {
       setErro(res.erro || 'Erro ao salvar o cliente.')
     }
   }
-
   async function deletar(cliente) {
     const id = typeof cliente === 'object' && cliente !== null ? cliente.id : cliente
     const confirmado = confirmar('Excluir este cliente?')
     if (!confirmado) return
     await window.api.deletarCliente(id)
     setClientes((prev) => prev.filter((c) => c.id !== id))
+    // ===== NOVO: feedback de sucesso =====
+    mostrarAviso('🗑️ Cliente excluído.')
   }
-
-  // Cards do painel de resumo
   const cardsPainel = [
     { status: 'ativo', rotulo: 'Ativos', cor: 'verde' },
     { status: 'atencao', rotulo: 'Atenção', cor: 'amarelo' },
     { status: 'inativo', rotulo: 'Inativos', cor: 'vermelho' }
   ]
-
-  // DEPOIS de todos os hooks: se um cliente foi selecionado, mostra a página de estatísticas
   if (clienteSelecionado) {
     return (
       <ClienteDetalhe
@@ -252,15 +256,20 @@ function Clientes({ usuario }) {
       />
     )
   }
-
   return (
     <div className="clientes">
+      {/* ===== NOVO: toast de sucesso ===== */}
+      {aviso && <div className="toast-sucesso">{aviso}</div>}
       <div className="section-head">
         <h2>Carteira de Clientes</h2>
-        <button className="btn-primary" onClick={abrirNovo}>+ Novo Cliente</button>
+        <div className="head-direita">
+          {/* ===== NOVO: contador de clientes ===== */}
+          <span className="total-badge">
+            {clientesFiltrados.length} {clientesFiltrados.length === 1 ? 'cliente' : 'clientes'}
+          </span>
+          <button className="btn-primary" onClick={abrirNovo}>+ Novo Cliente</button>
+        </div>
       </div>
-
-      {/* Painel de resumo por status + curva ABC */}
       <div className="painel-status">
         {cardsPainel.map((card) => (
           <button
@@ -272,7 +281,6 @@ function Clientes({ usuario }) {
             <span className="painel-rotulo">{card.rotulo}</span>
           </button>
         ))}
-        {/* Botões da Curva ABC */}
         <div className="painel-abc">
           {['A', 'B', 'C'].map((letra) => (
             <button
@@ -292,8 +300,6 @@ function Clientes({ usuario }) {
           </button>
         )}
       </div>
-
-      {/* Busca por nome */}
       <div className="busca-cliente">
         <input
           type="text"
@@ -305,7 +311,6 @@ function Clientes({ usuario }) {
           <button className="btn-limpar" onClick={() => setBuscaNome('')}>✕</button>
         )}
       </div>
-
       {mostrarForm && (
         <form className="cliente-form" onSubmit={salvar}>
           <h3>{editando ? 'Editar Cliente' : 'Novo Cliente'}</h3>
@@ -335,13 +340,7 @@ function Clientes({ usuario }) {
               CNPJ
               <input
                 value={form.cnpj}
-                onChange={(e) => {
-                  const v = e.target.value.replace(/\D/g, '').slice(0, 14)
-                  setForm({ ...form, cnpj: v })
-                  setCnpjMsg('')
-                  setCnpjTipo('')
-                  if (v.length === 14) consultarCnpj(v)
-                }}
+                onChange={(e) => aoDigitarCnpj(e.target.value.replace(/\D/g, '').slice(0, 14))}
                 placeholder="Digite 14 dígitos"
               />
             </label>
@@ -369,12 +368,16 @@ function Clientes({ usuario }) {
                   onChange={(e) => {
                     setBuscaCidade(e.target.value)
                     setForm({ ...form, cidade: e.target.value })
+                    setCidadeValida(false)
                     setMostrarCidades(true)
                   }}
                   onFocus={() => setMostrarCidades(true)}
                   onBlur={() => setTimeout(() => setMostrarCidades(false), 150)}
-                  placeholder="Digite para buscar no IBGE..."
+                  placeholder="Digite e clique na cidade (IBGE)"
                 />
+                {buscaCidade && !cidadeValida && (
+                  <small className="cnpj-status carregando">Selecione a cidade clicando na lista abaixo</small>
+                )}
                 {mostrarCidades && cidadesFiltradas.length > 0 && (
                   <div className="sugestoes">
                     {cidadesFiltradas.map((c) => (
@@ -386,6 +389,7 @@ function Clientes({ usuario }) {
                           const val = `${c.nome} - ${c.uf}`
                           setForm((f) => ({ ...f, cidade: val }))
                           setBuscaCidade(val)
+                          setCidadeValida(true)
                           setMostrarCidades(false)
                         }}
                       >
@@ -419,7 +423,6 @@ function Clientes({ usuario }) {
           </div>
         </form>
       )}
-
       {clientesFiltrados.length === 0 ? (
         <p className="empty">
           {buscaNome
@@ -435,12 +438,12 @@ function Clientes({ usuario }) {
               <tr>
                 <th>ID</th>
                 <th>Nome</th>
+                <th>Histórico</th>
                 {usuario.admin && <th>Vendedor</th>}
                 <th>CNPJ</th>
                 <th>Cidade</th>
-                <th>1ª Compra</th>
-                <th>Últ. Compra</th>
-                <th>Inativo</th>
+                {/* ===== NOVO: colunas de data unificadas ===== */}
+                <th>Compras</th>
                 <th>Status</th>
                 <th>Ações</th>
               </tr>
@@ -456,21 +459,34 @@ function Clientes({ usuario }) {
                         {c.nome}
                       </button>
                     </td>
+                    <td>
+                      <button
+                        className="btn-acao btn-historico-carteira"
+                        onClick={() => setHistoricoCliente(c)}
+                        title="Ver interações com este cliente"
+                      >
+                        🕓
+                      </button>
+                    </td>
                     {usuario.admin && <td>{vend ? vend.nome : '-'}</td>}
                     <td>{fmtCnpj(c.cnpj)}</td>
                     <td>{c.cidade}</td>
-                    <td>{fmtData(c.primeiraCompra)}</td>
-                    <td>{fmtData(c.ultimaCompra)}</td>
-                    <td>
-                      {c.diasInativo !== null ? (
-                        <span className={`dias dias-${c.status}`}>
-                          {c.diasInativo} {c.diasInativo === 1 ? 'dia' : 'dias'}
-                        </span>
+                    {/* ===== NOVO: datas unificadas em uma coluna ===== */}
+                    <td className="compras-cell">
+                      {c.primeiraCompra || c.ultimaCompra ? (
+                        <>
+                          <span className="compras-1a">1ª {fmtData(c.primeiraCompra)}</span>
+                          <span className="compras-ult">Últ {fmtData(c.ultimaCompra)}</span>
+                        </>
                       ) : '—'}
                     </td>
                     <td>
                       <span className={`status-badge badge-${c.status}`}>
                         {ROTULO_STATUS[c.status]}
+                        {/* ===== NOVO: dias inativos dentro do badge ===== */}
+                        {c.diasInativo !== null && (
+                          <span className="badge-dias"> · {c.diasInativo}d</span>
+                        )}
                       </span>
                     </td>
                     <td className="acoes">
@@ -482,6 +498,31 @@ function Clientes({ usuario }) {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+      {/* Modal de histórico de interações */}
+      {historicoCliente && (
+        <div className="modal-overlay" onClick={() => setHistoricoCliente(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>🕓 Interações — {historicoCliente.nome}</h3>
+            <p className="modal-sub">Últimas interações registradas com este cliente</p>
+            {historicoCarregando ? (
+              <p className="empty">Carregando...</p>
+            ) : historicoLista.length === 0 ? (
+              <p className="empty">Nenhuma interação registrada ainda.</p>
+            ) : (
+              <ul className="historico-lista">
+                {historicoLista.slice().reverse().map((item, i) => (
+                  <li key={i}>
+                    <strong>{fmtDataHoraHist(item.data)}</strong> · {ROTULOS_TIPO_HIST[item.tipo] || item.tipo} — {item.descricao}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="modal-acoes">
+              <button className="btn-secondary" onClick={() => setHistoricoCliente(null)}>Fechar</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

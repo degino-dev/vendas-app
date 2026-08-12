@@ -1,8 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron'
-
 contextBridge.exposeInMainWorld('api', {
   ping: () => ipcRenderer.invoke('app:ping'),
   login: (credenciais) => ipcRenderer.invoke('auth:login', credenciais),
+  trocarSenha: (dados) => ipcRenderer.invoke('auth:trocarSenha', dados),
   criarVendedor: (dados) => ipcRenderer.invoke('vendedores:criar', dados),
   atualizarVendedor: (vendedor) => ipcRenderer.invoke('vendedores:atualizar', vendedor),
   listarVendedores: () => ipcRenderer.invoke('vendedores:listar'),
@@ -19,6 +19,9 @@ contextBridge.exposeInMainWorld('api', {
   deletarVenda: (id) => ipcRenderer.invoke('vendas:deletar', id),
   listarOrcamentos: (vendedorId) => ipcRenderer.invoke('orcamentos:listar', vendedorId),
   criarOrcamento: (orcamento) => ipcRenderer.invoke('orcamentos:criar', orcamento),
+  atualizarOrcamento: (orcamento) => ipcRenderer.invoke('orcamentos:atualizar', orcamento),
+  aprovarOrcamento: (id, info) => ipcRenderer.invoke('orcamentos:aprovar', id, info),
+  recusarOrcamento: (id, info) => ipcRenderer.invoke('orcamentos:recusar', id, info),
   deletarOrcamento: (id) => ipcRenderer.invoke('orcamentos:deletar', id),
   gerarInsights: () => ipcRenderer.invoke('insights:gerar'),
   marcarInsight: (dados) => ipcRenderer.invoke('insights:marcar', dados),
@@ -38,7 +41,15 @@ contextBridge.exposeInMainWorld('api', {
   alterarCaminho: (novoCaminho) => ipcRenderer.invoke('config:alterarCaminho', novoCaminho),
   carregarDados: () => ipcRenderer.invoke('dados:carregar'),
   salvarDados: (dados) => ipcRenderer.invoke('dados:salvar', dados),
-   caminhoArquivo: () => ipcRenderer.invoke('dados:caminho'),
+  caminhoArquivo: () => ipcRenderer.invoke('dados:caminho'),
   focarJanela: () => ipcRenderer.invoke('janela:focar'),
-  onUpdateStatus: (callback) => {ipcRenderer.on('update-status', (_e, status) => callback(status))}
+  onUpdateStatus: (callback) => {ipcRenderer.on('update-status', (_e, status) => callback(status))},
+  historicoCliente: (id) => ipcRenderer.invoke('historico:listar', id),
+  salvarHistorico: (id, item) => ipcRenderer.invoke('historico:salvar', id, item),
+  notasTopCliente: (codigoCliente) => ipcRenderer.invoke('notas:topCliente', codigoCliente),
+  consultarIA: (pergunta) => ipcRenderer.invoke('ia:consultar', pergunta),
+  avaliarIA: (dados) => ipcRenderer.invoke('ia:avaliar', dados),
+  carteiraIA: () => ipcRenderer.invoke('ia:carteira'),
+  onUpdateBaixado: (cb) => ipcRenderer.on('update:baixado', () => cb()),
+reiniciarParaAtualizar: () => ipcRenderer.invoke('app:reiniciarAtualizar'),
 })

@@ -1,30 +1,43 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { fmtMoeda, fmtCnpj, fmtFone, fmtDataHora, fmtData } from '../utils/format'
 
-const fmtMoeda = (v) =>
-  Number(v || 0).toLocaleString('pt-BR', {
-    style: 'currency',
-    currency: 'BRL',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  })
-
-const fmtCnpj = (v) => {
-  const s = String(v || '').replace(/\D/g, '')
-  if (s.length !== 14) return v || ''
-  return `${s.slice(0, 2)}.${s.slice(2, 5)}.${s.slice(5, 8)}/${s.slice(8, 12)}-${s.slice(12)}`
+const ROTULOS_TIPO = {
+  ligacao: '📞 Liguei',
+  promocao: '🎁 Promoção',
+  visita: '📅 Visita agendada',
+  proposta: '📄 Proposta',
+  obs: '📝 Observação'
 }
 
-const fmtFone = (v) => {
-  const s = String(v || '').replace(/\D/g, '')
-  if (s.length === 11) return `(${s.slice(0, 2)}) ${s.slice(2, 7)}-${s.slice(7)}`
-  if (s.length === 10) return `(${s.slice(0, 2)}) ${s.slice(2, 6)}-${s.slice(6)}`
-  return v || ''
+const STATUS_ORC = {
+  aprovado: { label: '✅ Aprovado', classe: 'status-aprovado' },
+  recusado: { label: '❌ Recusado', classe: 'status-recusado' }
 }
 
 export default function ClienteDetalhe({ clienteId, onVoltar }) {
   const [dados, setDados] = useState(null)
   const [carregando, setCarregando] = useState(true)
   const [erro, setErro] = useState('')
+  const [historico, setHistorico] = useState([])
+  const [novoTipo, setNovoTipo] = useState('obs')
+  const [novaDesc, setNovaDesc] = useState('')
+  const [salvando, setSalvando] = useState(false)
+  // ===== NOVO: feedback de sucesso (toast) =====
+  const [aviso, setAviso] = useState('')
+  const avisoTimer = useRef(null)
+  const mostrarAviso = (msg) => {
+    setAviso(msg)
+    if (avisoTimer.current) clearTimeout(avisoTimer.current)
+    avisoTimer.current = setTimeout(() => setAviso(''), 3000)
+  }
+  // Top produtos (notas.json)
+  const [maisComprados, setMaisComprados] = useState([])
+  const [menosComprados, setMenosComprados] = useState([])
+  const [carregandoProdutos, setCarregandoProdutos] = useState(false)
+  const [erroProdutos, setErroProdutos] = useState('')
+  // Orçamentos aprovados e recusados
+  const [orcamentos, setOrcamentos] = useState([])
+  const [carregandoOrc, setCarregandoOrc] = useState(false)
 
   useEffect(() => {
     let ativo = true
@@ -48,10 +61,85 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
         setErro('Falha ao carregar as estatísticas do cliente.')
         setCarregando(false)
       })
-    return () => {
-      ativo = false
-    }
+    return () => { ativo = false }
   }, [clienteId])
+
+  // Carrega o histórico automaticamente (sempre visível)
+  useEffect(() => {
+    if (!window.api || typeof window.api.historicoCliente !== 'function') {
+      setHistorico([])
+      return
+    }
+    window.api
+      .historicoCliente(clienteId)
+      .then((res) => setHistorico(Array.isArray(res) ? res : []))
+      .catch((err) => { console.error('Erro ao carregar histórico:', err); setHistorico([]) })
+  }, [clienteId])
+
+  // Carrega o Top de produtos quando o cliente é carregado (usa o codigo)
+  useEffect(() => {
+    if (!dados || !dados.ok || !dados.cliente || !dados.cliente.codigo) return
+    const codigo = String(dados.cliente.codigo)
+    if (!window.api || typeof window.api.notasTopCliente !== 'function') {
+      setErroProdutos('Função de notas não disponível. Verifique o preload/index.js.')
+      return
+    }
+    setCarregandoProdutos(true)
+    setErroProdutos('')
+    window.api
+      .notasTopCliente(codigo)
+      .then((res) => {
+        if (res && res.ok) {
+          setMaisComprados(res.maisComprados || [])
+          setMenosComprados(res.menosComprados || [])
+        } else {
+          setErroProdutos((res && res.erro) || 'Sem dados de notas para este cliente.')
+        }
+      })
+      .catch((err) => {
+        console.error('Erro ao carregar top produtos:', err)
+        setErroProdutos('Falha ao carregar os produtos do notas.json.')
+      })
+      .finally(() => setCarregandoProdutos(false))
+  }, [dados])
+
+  // Carrega orçamentos aprovados e recusados deste cliente
+  useEffect(() => {
+    if (!window.api || typeof window.api.listarOrcamentos !== 'function') return
+    setCarregandoOrc(true)
+    window.api
+      .listarOrcamentos()
+      .then((lista) => {
+        const arr = Array.isArray(lista) ? lista : []
+        const doCliente = arr.filter(
+          (o) => o.clienteId === clienteId && (o.status === 'aprovado' || o.status === 'recusado')
+        )
+        setOrcamentos(doCliente)
+      })
+      .catch((err) => { console.error('Erro ao carregar orçamentos:', err); setOrcamentos([]) })
+      .finally(() => setCarregandoOrc(false))
+  }, [clienteId])
+
+  const adicionarHistorico = () => {
+    const desc = novaDesc.trim()
+    if (!desc) return
+    if (!window.api || typeof window.api.salvarHistorico !== 'function') {
+      setErro('Função de histórico não disponível. Verifique o preload/index.js.')
+      return
+    }
+    setSalvando(true)
+    window.api
+      .salvarHistorico(clienteId, { tipo: novoTipo, descricao: desc })
+      .then(() => {
+        setNovaDesc('')
+        // ===== NOVO: feedback de sucesso =====
+        mostrarAviso('✅ Interação registrada!')
+        return window.api.historicoCliente(clienteId)
+      })
+      .then((res) => setHistorico(Array.isArray(res) ? res : []))
+      .catch((err) => { console.error('Erro ao salvar histórico:', err); setErro('Falha ao salvar a interação.') })
+      .finally(() => setSalvando(false))
+  }
 
   if (carregando) {
     return (
@@ -63,7 +151,6 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
       </div>
     )
   }
-
   if (erro) {
     return (
       <div className="painel">
@@ -75,7 +162,6 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
       </div>
     )
   }
-
   if (!dados || !dados.ok) {
     return (
       <div className="painel">
@@ -90,7 +176,6 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
 
   const c = dados.cliente
   const e = dados.estatisticas
-
   const saudeMeta = {
     novo: { label: '🆕 Novo', classe: 'saude-novo' },
     ativo: { label: '✅ Ativo', classe: 'saude-ativo' },
@@ -99,8 +184,26 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
   }
   const saude = saudeMeta[e.saude] || { label: e.saude || '—', classe: '' }
 
+  // ===== NOVO: sugestão de próxima ação baseada na saúde do cliente =====
+  const proximaAcao = () => {
+    if (e.saude === 'risco') {
+      return { texto: `Cliente em risco há ${e.diasDesdeUltima ?? '?'} dias sem comprar. Ligue hoje para reativar.`, classe: 'acao-risco' }
+    }
+    if (e.saude === 'atencao') {
+      return { texto: 'Cliente com atenção: faça um contato de acompanhamento esta semana.', classe: 'acao-atencao' }
+    }
+    if (e.saude === 'novo') {
+      return { texto: 'Cliente novo: agende um follow-up para apresentar mais produtos.', classe: 'acao-novo' }
+    }
+    return { texto: 'Cliente ativo: aproveite para oferecer cross-sell dos produtos menos recorrentes.', classe: 'acao-ativo' }
+  }
+  const acao = proximaAcao()
+
   return (
     <div className="painel">
+      {/* ===== NOVO: toast de sucesso ===== */}
+      {aviso && <div className="toast-sucesso">{aviso}</div>}
+
       <div className="cliente-detalhe-topo">
         <button className="btn-voltar" onClick={onVoltar}>← Voltar</button>
         <div className="cliente-badges">
@@ -111,11 +214,22 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
 
       <h2 className="cliente-titulo">{c.nome}</h2>
 
+      {/* ===== NOVO: sugestão de próxima ação ===== */}
+      <div className={'proxima-acao ' + acao.classe}>
+        🎯 <strong>Próxima ação:</strong> {acao.texto}
+      </div>
+
       {/* Dados cadastrais */}
       <div className="cliente-info-grid">
         {c.codigo && <div className="info-card"><span className="info-label">ID</span><span>{c.codigo}</span></div>}
         {c.cnpj && <div className="info-card"><span className="info-label">CNPJ</span><span>{fmtCnpj(c.cnpj)}</span></div>}
-        {c.email && <div className="info-card"><span className="info-label">E-mail</span><span>{c.email}</span></div>}
+        {c.email && (
+          <div className="info-card">
+            <span className="info-label">E-mail</span>
+            {/* ===== NOVO: e-mail clicável ===== */}
+            <a href={`mailto:${c.email}`} className="info-link">{c.email}</a>
+          </div>
+        )}
         {c.whats && <div className="info-card"><span className="info-label">WhatsApp</span><span>{fmtFone(c.whats)}</span></div>}
         {c.cidade && <div className="info-card"><span className="info-label">Cidade</span><span>{c.cidade}</span></div>}
         {c.segmento && <div className="info-card"><span className="info-label">Segmento</span><span>{c.segmento}</span></div>}
@@ -124,12 +238,12 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
       {/* Indicadores */}
       <div className="stats-grid">
         <div className="stat-card"><strong>{e.totalVendas}</strong><span>Vendas</span></div>
-        <div className="stat-card"><strong>{fmtMoeda(e.totalGasto)}</strong><span>Total gasto</span></div>
+        <div className="stat-card stat-destaque"><strong>{fmtMoeda(e.totalGasto)}</strong><span>Total gasto</span></div>
         <div className="stat-card"><strong>{fmtMoeda(e.ticketMedio)}</strong><span>Ticket médio</span></div>
         <div className="stat-card"><strong>{e.intervaloDias ? e.intervaloDias + ' dias' : '—'}</strong><span>Frequência média</span></div>
         <div className="stat-card"><strong>{e.frequenciaMensal ? e.frequenciaMensal + '/mês' : '—'}</strong><span>Compras/mês</span></div>
         <div className="stat-card"><strong>{e.diaComum || '—'}</strong><span>Dia mais comum</span></div>
-        <div className="stat-card"><strong>{e.diasDesdeUltima != null ? e.diasDesdeUltima + ' dias' : '—'}</strong><span>Desde última compra</span></div>
+        <div className="stat-card stat-destaque"><strong>{e.diasDesdeUltima != null ? e.diasDesdeUltima + ' dias' : '—'}</strong><span>Desde última compra</span></div>
         <div className="stat-card"><strong>{fmtMoeda(e.totalAnoAtual)}</strong><span>Total no ano ({new Date().getFullYear()})</span></div>
       </div>
 
@@ -152,7 +266,8 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
               <tbody>
                 {e.ultimasCompras.map((v, i) => (
                   <tr key={i}>
-                    <td>{v.data}</td>
+                    {/* ===== NOVO: usa fmtData (consistente) ===== */}
+                    <td>{fmtData(v.data)}</td>
                     <td>{v.insumos || '—'}</td>
                     <td>{v.equipamento || '—'}</td>
                     <td>{fmtMoeda(v.valor)}</td>
@@ -161,6 +276,135 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
               </tbody>
             </table>
           </div>
+        )}
+      </div>
+
+      {/* Orçamentos aprovados e recusados */}
+      <div className="cliente-secao">
+        <h3>📋 Orçamentos aprovados e recusados</h3>
+        {carregandoOrc ? (
+          <p className="empty">Carregando orçamentos...</p>
+        ) : orcamentos.length === 0 ? (
+          <p className="empty">Nenhum orçamento aprovado ou recusado para este cliente.</p>
+        ) : (
+          <div className="tabela-wrap">
+            <table className="tabela">
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th>Envio</th>
+                  <th>Insumos</th>
+                  <th>Valor Insumos</th>
+                  <th>Equip.</th>
+                  <th>Valor Equip.</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {orcamentos
+                  .slice()
+                  .sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')))
+                  .map((o) => {
+                    const st = STATUS_ORC[o.status] || { label: o.status, classe: '' }
+                    return (
+                      <tr key={o.id} className={'orc-status-' + o.status}>
+                        <td>{fmtData(o.data)}</td>
+                        <td>{o.envio || '—'}</td>
+                        <td>{o.pedidoInsumos || '—'}</td>
+                        <td>{fmtMoeda(o.valorInsumos)}</td>
+                        <td>{o.pedidoEquipamento || '—'}</td>
+                        <td>{fmtMoeda(o.valorEquipamento)}</td>
+                        <td>
+                          <span className={'badge ' + st.classe}>{st.label}</span>
+                          {o.status === 'recusado' && o.motivo && (
+                            <div className="recusa-info">Motivo: {o.motivo}</div>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Top produtos (notas.json) */}
+      <div className="cliente-secao">
+        <h3>📊 Produtos mais comprados</h3>
+        {carregandoProdutos ? (
+          <p className="empty">Carregando produtos...</p>
+        ) : erroProdutos ? (
+          <p className="form-erro">{erroProdutos}</p>
+        ) : maisComprados.length === 0 ? (
+          <p className="empty">Nenhum produto encontrado no notas.json para este cliente.</p>
+        ) : (
+          <ol className="top-lista">
+            {maisComprados.map((p, i) => (
+              <li key={p.codigo}>
+                <span className="top-pos">{i + 1}</span>
+                <span className="top-desc">{p.descricao}</span>
+                <span className="top-qtd">{p.quantidade} {p.unidade}</span>
+                <span className="top-valor">{fmtMoeda(p.valor)}</span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+
+      <div className="cliente-secao">
+        <h3>📉 Produtos menos recorrentes</h3>
+        {carregandoProdutos ? (
+          <p className="empty">Carregando produtos...</p>
+        ) : erroProdutos ? (
+          <p className="form-erro">{erroProdutos}</p>
+        ) : menosComprados.length === 0 ? (
+          <p className="empty">Nenhum produto encontrado no notas.json para este cliente.</p>
+        ) : (
+          <ol className="top-lista">
+            {menosComprados.map((p, i) => (
+              <li key={p.codigo}>
+                <span className="top-pos">{i + 1}</span>
+                <span className="top-desc">{p.descricao}</span>
+                <span className="top-qtd">{p.aparicoes} aparições · {p.quantidade} {p.unidade}</span>
+                <span className="top-valor">{fmtMoeda(p.valor)}</span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+
+      {/* Histórico de interações — sempre visível */}
+      <div className="cliente-secao historico-secao">
+        <h3>📋 Histórico de Interações</h3>
+        <div className="historico-form">
+          <select value={novoTipo} onChange={(e) => setNovoTipo(e.target.value)}>
+            <option value="ligacao">📞 Liguei</option>
+            <option value="promocao">🎁 Enviei promoção</option>
+            <option value="visita">📅 Agendei visita</option>
+            <option value="proposta">📄 Enviei proposta</option>
+            <option value="obs">📝 Observação</option>
+          </select>
+          <input
+            value={novaDesc}
+            onChange={(e) => setNovaDesc(e.target.value)}
+            placeholder="O que aconteceu com o cliente?"
+            onKeyDown={(e) => e.key === 'Enter' && adicionarHistorico()}
+          />
+          <button onClick={adicionarHistorico} disabled={salvando}>
+            {salvando ? 'Salvando...' : 'Adicionar'}
+          </button>
+        </div>
+        {historico.length === 0 ? (
+          <p className="empty">Nenhuma interação registrada ainda.</p>
+        ) : (
+          <ul className="historico-lista">
+            {historico.slice().reverse().map((item, i) => (
+              <li key={i}>
+                <strong>{fmtDataHora(item.data)}</strong> · {ROTULOS_TIPO[item.tipo] || item.tipo} — {item.descricao}
+              </li>
+            ))}
+          </ul>
         )}
       </div>
     </div>

@@ -1,6 +1,6 @@
+.env
+.env.local
 node_modules/
 dist/
 out/
-*.log
-dados.json
-config.json
+release/
