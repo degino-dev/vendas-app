@@ -406,10 +406,10 @@ function Vendas({ usuario }) {
                     <td className="valor-meta">{fmtValor(calcularMeta(v))}</td>
                     <td>{fmtData(v.data)}</td>
                     <td className="acoes">
-                      {/* ===== NOVO: botões com texto + tooltip ===== */}
-                      <button className="btn-acao" onClick={() => abrirEdicao(v)} title="Editar venda">✏️ Editar</button>
-                      <button className="btn-acao btn-acao-danger" onClick={() => deletar(v)} title="Excluir venda">🗑️ Excluir</button>
-                    </td>
+  {/* ===== SÓ ÍCONES (economiza espaço em telas pequenas) ===== */}
+  <button className="btn-acao" onClick={() => abrirEdicao(v)} title="Editar venda">✏️</button>
+  <button className="btn-acao btn-acao-danger" onClick={() => deletar(v)} title="Excluir venda">🗑️</button>
+</td>
                   </tr>
                 )
               })}

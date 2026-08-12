@@ -2037,3 +2037,14 @@ html, body {
 .update-banner .btn-primary:hover {
   background: #f0fdf4;
 }
+
+/* ===== Botões de ação só com ícone (Orçamentos) ===== */
+.acoes .btn-acao {
+  padding: 4px 8px;
+  font-size: 14px;
+  line-height: 1;
+  margin-left: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}

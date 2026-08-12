@@ -533,16 +533,16 @@ export default function Orcamentos({ usuario }) {
                     <td>{fmtData(o.data)}</td>
                     <td>{fmtData(o.prazoValidade) || '—'}</td>
                     <td className="acoes">
-                      {o.status === 'aguardando' && (
-                        <>
-                          {/* ===== NOVO: botões com texto + tooltip ===== */}
-                          <button className="btn-acao" onClick={() => abrirEdicao(o)} title="Editar orçamento">✏️ Editar</button>
-                          <button className="btn-acao btn-acao-ok" onClick={() => abrirAprovacao(o)} title="Aprovar (importar para Vendas)">✅ Aprovar</button>
-                          <button className="btn-acao btn-acao-danger" onClick={() => abrirRecusa(o)} title="Recusar orçamento">❌ Recusar</button>
-                        </>
-                      )}
-                      <button className="btn-acao btn-acao-danger" onClick={() => deletar(o)} title="Excluir orçamento">🗑️ Excluir</button>
-                    </td>
+  {o.status === 'aguardando' && (
+    <>
+      {/* ===== SÓ ÍCONES (economiza espaço em telas pequenas) ===== */}
+      <button className="btn-acao" onClick={() => abrirEdicao(o)} title="Editar orçamento">✏️</button>
+      <button className="btn-acao btn-acao-ok" onClick={() => abrirAprovacao(o)} title="Aprovar (importar para Vendas)">✅</button>
+      <button className="btn-acao btn-acao-danger" onClick={() => abrirRecusa(o)} title="Recusar orçamento">❌</button>
+    </>
+  )}
+  <button className="btn-acao btn-acao-danger" onClick={() => deletar(o)} title="Excluir orçamento">🗑️</button>
+</td>
                   </tr>
                 )
               })}
