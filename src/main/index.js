@@ -1,7 +1,7 @@
 // src/main/index.js
 require('dotenv').config()
 
-import { app, shell, BrowserWindow, ipcMain, nativeTheme } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, nativeTheme, dialog } from 'electron'
 import { join } from 'path'
 import { readFileSync, existsSync } from 'fs'
 import bcrypt from 'bcryptjs'
@@ -1159,9 +1159,25 @@ function createWindow() {
 function configurarAutoUpdate(win) {
   // Só atualiza em produção (app empacotado), nunca no "npm run dev"
   if (!app.isPackaged) return
-
-  autoUpdater.autoDownload = true
+  autoUpdater.autoDownload = false
+  // ===== NOVO: aviso de versão nova ao abrir o app =====
+  autoUpdater.on('update-available', async (info) => {
+    const { response } = await dialog.showMessageBox({
+      type: 'info',
+      title: 'Atualização disponível',
+      message: `Nova versão ${info.version} encontrada!`,
+      detail: 'Deseja baixar e instalar agora?',
+      buttons: ['Baixar e instalar', 'Depois'],
+      defaultId: 0,
+      cancelId: 1
+    })
+    if (response === 0) {
+      autoUpdater.downloadUpdate()
+    }
+  })
   autoUpdater.autoInstallOnAppQuit = true
+  // ... o resto da função continua igual (checkForUpdates, update-downloaded, etc.)
+}
 
   // Avisa o front quando a atualização foi baixada
   autoUpdater.on('update-downloaded', () => {
