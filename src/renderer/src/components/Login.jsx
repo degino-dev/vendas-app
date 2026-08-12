@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import logo from '../../public/logo.png'
 
 export default function Login({ onLogin }) {
   const [usuario, setUsuario] = useState('')

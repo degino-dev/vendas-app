@@ -22,8 +22,8 @@ import { autoUpdater } from 'electron-updater'
 import { CHAVE_GEMINI } from './chave.js'
 import { registrarConsulta, registrarAvaliacao, carregarExemplos, carregarConsultasRecentes } from './memoriaIA'
 import { buscarFichasPorTermos } from './catalogoProdutos'
+import 'dotenv/config'
 
-const { autoUpdater } = require('electron-updater')
 
 // ===== DECLARAÇÕES (TEM QUE VIR ANTES DE QUALQUER handleUnico) =====
 const canaisRegistrados = new Set()
@@ -1177,24 +1177,8 @@ function configurarAutoUpdate(win) {
 }
 
 app.whenReady().then(() => {
-	configurarAutoUpdate(win)
-  const enviarStatus = (status) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('update-status', status)
-    }
-  }
-  if (app.isPackaged) {
-    autoUpdater.autoDownload = false
-    autoUpdater.on('checking-for-update', () => {})
-    autoUpdater.on('update-available', () => {})
-    autoUpdater.on('update-not-available', () => {})
-    autoUpdater.on('error', () => {})
-    autoUpdater.on('update-downloaded', () => {
-      autoUpdater.quitAndInstall()
-    })
-    autoUpdater.checkForUpdatesAndNotify()
-  }
   createWindow()
+  configurarAutoUpdate(mainWindow)
   try {
     migrarDadosAntigos()
     console.log('Dados prontos em:', caminhoArquivo())
