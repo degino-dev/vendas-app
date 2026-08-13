@@ -1,6 +1,5 @@
 // src/main/index.js
 require('dotenv').config()
-
 import { app, shell, BrowserWindow, ipcMain, nativeTheme, dialog } from 'electron'
 import { join } from 'path'
 import { readFileSync, existsSync } from 'fs'
@@ -23,8 +22,6 @@ import { CHAVE_GEMINI } from './chave.js'
 import { registrarConsulta, registrarAvaliacao, carregarExemplos, carregarConsultasRecentes } from './memoriaIA'
 import { buscarFichasPorTermos } from './catalogoProdutos'
 import 'dotenv/config'
-
-
 // ===== DECLARAÇÕES (TEM QUE VIR ANTES DE QUALQUER handleUnico) =====
 const canaisRegistrados = new Set()
 function handleUnico(canal, fn) {
@@ -32,11 +29,9 @@ function handleUnico(canal, fn) {
   canaisRegistrados.add(canal)
   ipcMain.handle(canal, fn)
 }
-
 // ===== NOTAS FISCAIS (notas.json) =====
 let cacheNotas = null
 let cacheNotasCarregadoEm = null
-
 // Extrai o PRIMEIRO bloco JSON completo (ignora conteúdo duplicado depois)
 // Usa charCodeAt para evitar barras invertidas que quebram ao colar
 function extrairPrimeiroJSON(raw) {
@@ -63,7 +58,6 @@ function extrairPrimeiroJSON(raw) {
   }
   return null
 }
-
 function carregarNotas() {
   const caminho = 'U:/DADOS DO APP/notas.json'
   if (!existsSync(caminho)) return { ok: false, erro: 'notas.json não encontrado em U:/DADOS DO APP' }
@@ -85,13 +79,18 @@ function carregarNotas() {
     return { ok: false, erro: 'Erro ao ler notas.json: ' + err.message }
   }
 }
-
-handleUnico('notas:topCliente', (_e, codigoCliente) => {
+handleUnico('notas:topCliente', (_e, codigoCliente, ano) => {
   const res = carregarNotas()
   if (!res.ok) return res
   const notas = res.dados.notas || []
   const chave = String(codigoCliente).trim()
-  const notasDoCliente = notas.filter((n) => String(n.cliente && n.cliente.codigo).trim() === chave)
+  const anoFiltro = String(ano || 'total').trim()
+  const notasDoCliente = notas.filter((n) => {
+    if (String(n.cliente && n.cliente.codigo).trim() !== chave) return false
+    if (anoFiltro === 'total') return true
+    const dataNota = n.data || n.emissao || n.dataEmissao || ''
+    return String(dataNota).slice(0, 4) === anoFiltro
+  })
   if (notasDoCliente.length === 0) {
     return { ok: true, cliente: null, maisComprados: [], menosComprados: [] }
   }
@@ -119,7 +118,20 @@ handleUnico('notas:topCliente', (_e, codigoCliente) => {
   const menosComprados = [...lista].sort((a, b) => a.aparicoes - b.aparicoes).slice(0, 20)
   return { ok: true, cliente: notasDoCliente[0].cliente, maisComprados, menosComprados }
 })
-
+handleUnico('notas:anos', (_e) => {
+  const res = carregarNotas()
+  if (!res.ok) return { ok: false, anos: [] }
+  const notas = res.dados.notas || []
+  const anos = [...new Set(
+    notas
+      .map((n) => {
+        const d = n.data || n.emissao || n.dataEmissao || ''
+        return String(d).slice(0, 4)
+      })
+      .filter((a) => a && /^\d{4}$/.test(a))
+  )].sort()
+  return { ok: true, anos }
+})
 // ===== CONSULTAR — Perguntas em linguagem natural =====
 function normalizarTexto(t) {
   return String(t || '')
@@ -127,7 +139,6 @@ function normalizarTexto(t) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
 }
-
 const STOPWORDS = new Set([
   'quem', 'qual', 'quais', 'para', 'com', 'por', 'que', 'o', 'a', 'os', 'as',
   'de', 'do', 'da', 'dos', 'das', 'em', 'no', 'na', 'nos', 'nas', 'um', 'uma',
@@ -137,14 +148,12 @@ const STOPWORDS = new Set([
   'precisando', 'precisa', 'ja', 'já', 'muito', 'pouco', 'tipo', 'produto',
   'produtos', 'cliente', 'clientes', 'nota', 'notas', 'comprar', 'precisam'
 ])
-
 function extrairTermos(pergunta) {
   return normalizarTexto(pergunta)
     .split(/[^a-z0-9]+/)
     .filter((p) => p.length >= 4 && !STOPWORDS.has(p))
     .map((p) => (p.endsWith('s') ? p.slice(0, -1) : p))
 }
-
 function buscarProdutosPorTermos(notas, termos, codigosPermitidos) {
   const mapa = {}
   const lista = []
@@ -185,7 +194,6 @@ function buscarProdutosPorTermos(notas, termos, codigosPermitidos) {
   }
   return lista
 }
-
 // ===== Busca produtos por CLIENTE e PERÍODO (ex.: últimos 6 meses) =====
 // Retorna os produtos que um cliente comprou dentro de um período
 function buscarProdutosPorCliente(notas, codCliente, meses = 6) {
@@ -225,7 +233,6 @@ function buscarProdutosPorCliente(notas, codCliente, meses = 6) {
   lista.sort((a, b) => b.valor - a.valor)
   return lista
 }
-
 async function responderComGemini(prompt) {
   const disponiveis = await listarModelosDisponiveis()
   if (disponiveis.length === 0) {
@@ -260,7 +267,6 @@ async function responderComGemini(prompt) {
   }
   return { ok: false, erro: ultimoErro }
 }
-
 handleUnico('ia:consultar', async (_e, pergunta) => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
   const perguntaTexto = String(pergunta || '').trim()
@@ -269,15 +275,17 @@ handleUnico('ia:consultar', async (_e, pergunta) => {
   const notas = notasRes.ok ? (notasRes.dados.notas || []) : []
   const termos = extrairTermos(perguntaTexto)
   const dados = dadosParaPerfil()
+  // ===== NOVO: filtra clientes ARQUIVADOS (a IA não enxerga) =====
+  const clientesAtivos = (dados.clientes || []).filter((c) => !c.arquivado)
   const codigosPermitidos = new Set(
-    dados.clientes.map((c) => String(c.codigo).trim()).filter(Boolean)
+    clientesAtivos.map((c) => String(c.codigo).trim()).filter(Boolean)
   )
   const produtosEncontrados = buscarProdutosPorTermos(notas, termos, codigosPermitidos).slice(0, 60)
     // ===== DETECTA se a pergunta menciona um CLIENTE específico =====
   // Tenta achar o cliente pelo nome mencionado na pergunta
   const perguntaNorm = normalizarTexto(perguntaTexto)
   let clienteAlvo = null
-  for (const c of dados.clientes) {
+  for (const c of clientesAtivos) {
     const nomeNorm = normalizarTexto(c.nome)
     if (nomeNorm && perguntaNorm.includes(nomeNorm)) {
       clienteAlvo = c
@@ -293,7 +301,7 @@ handleUnico('ia:consultar', async (_e, pergunta) => {
   const orcamentosAguardando = (dados.orcamentos || [])
     .filter((o) => o.status === 'aguardando')
     .map((o) => {
-      const cli = dados.clientes.find((c) => c.id === o.clienteId)
+      const cli = clientesAtivos.find((c) => c.id === o.clienteId)
       const valor = (Number(o.valorInsumos) || 0) + (Number(o.valorEquipamento) || 0)
       return {
         data: o.data,
@@ -313,10 +321,9 @@ handleUnico('ia:consultar', async (_e, pergunta) => {
     clienteDetectado: clienteAlvo ? { codigo: clienteAlvo.codigo, nome: clienteAlvo.nome } : null,
     produtosDoCliente: clienteAlvo ? produtosDoCliente : [],
     orcamentosAguardando,
-    totalClientes: dados.clientes.length,
+    totalClientes: clientesAtivos.length,
     totalVendas: dados.vendas.length
   }
-
   // ===== MUDANÇA: const → let (permite os prompt += abaixo) =====
   let prompt =
     'Você é um consultor de vendas sênior, com 20 anos de experiência, que responde perguntas de vendedores.\n' +
@@ -338,19 +345,16 @@ handleUnico('ia:consultar', async (_e, pergunta) => {
     '- NUNCA invente produtos que não existam nas notas ou no catálogo. Só sugira produtos que apareçam nos dados ou nas fichas técnicas fornecidas.\n' +
     '- Quando sugerir um produto complementar, diga o CÓDIGO e o NOME exatos do produto, e explique POR QUE ele é complementar (uso conjunto, aplicação clínica).\n' +
     '- Se houver fichas técnicas, use o conhecimento biomédico (aplicações clínicas, compatibilidades) para dar credibilidade técnica à sugestão.\n'
-
   // ===== CATÁLOGO: injeta fichas técnicas no prompt =====
   if (fichasRelevantes.length > 0) {
     prompt += '\nFICHAS TÉCNICAS DOS PRODUTOS RELACIONADOS (use para explicar o produto com conhecimento técnico):\n' +
       JSON.stringify(fichasRelevantes.map((p) => p.ficha), null, 2) + '\n'
   }
-
   // ===== MEMÓRIA: injeta exemplos de respostas boas (few-shot) =====
   if (exemplos.length > 0) {
     prompt += '\nExemplos de respostas que este vendedor avaliou como BOAS (use o MESMO estilo, formato e nível de detalhe):\n' +
       JSON.stringify(exemplos, null, 2) + '\n'
   }
-
   const res = await responderComGemini(prompt)
   if (res.ok) {
     registrarConsulta(sessao.id, perguntaTexto, res.texto)
@@ -373,11 +377,9 @@ function capitalizarTexto(texto) {
     .join(' ')
     .replace(/\b(ltda|sa|me|epp)\b/gi, (m) => m.toUpperCase())
 }
-
 // Dados do vendedor logado (em memória durante a sessão)
 let sessao = null
 let mainWindow = null
-
 // ===== CÁLCULO DO VALOR PARA A META (pedido − frete) =====
 // O frete pode ser valor fixo (R$) ou porcentagem (%) do total do pedido.
 // O valor que conta para a META = (insumos + equipamentos) − frete.
@@ -396,7 +398,6 @@ function calcularValorMeta(orcamentoOuVenda) {
   const meta = Math.max(0, total - valorFrete)
   return { total, valorFrete, meta }
 }
-
 // --- Login ---
 handleUnico('auth:login', (_e, { usuario, senha }) => {
   const vendedores = carregarVendedores()
@@ -409,7 +410,6 @@ handleUnico('auth:login', (_e, { usuario, senha }) => {
   seguro.trocarSenhaNoProximoLogin = !!vendedor.trocarSenhaNoProximoLogin
   return { ok: true, vendedor: seguro }
 })
-
 // ===== NOVO: troca obrigatória de senha no primeiro acesso =====
 handleUnico('auth:trocarSenha', (_e, { vendedorId, senhaAtual, novaSenha }) => {
   const vendedores = carregarVendedores()
@@ -434,7 +434,6 @@ handleUnico('auth:trocarSenha', (_e, { vendedorId, senhaAtual, novaSenha }) => {
   seguro.trocarSenhaNoProximoLogin = false
   return { ok: true, vendedor: seguro }
 })
-
 // --- Vendedores (admin) ---
 handleUnico('vendedores:criar', (_e, { nome, usuario, senha, admin, metaMensal, metaSemanal }) => {
   const vendedores = carregarVendedores()
@@ -456,7 +455,6 @@ handleUnico('vendedores:criar', (_e, { nome, usuario, senha, admin, metaMensal, 
   const { senhaHash, ...seguro } = novo
   return { ok: true, vendedor: seguro }
 })
-
 handleUnico('vendedores:atualizar', (_e, vendedor) => {
   const vendedores = carregarVendedores()
   const idx = vendedores.findIndex((v) => v.id === vendedor.id)
@@ -484,7 +482,6 @@ handleUnico('vendedores:atualizar', (_e, vendedor) => {
 handleUnico('vendedores:listar', () => {
   return carregarVendedores().map(({ senhaHash, ...v }) => v)
 })
-
 handleUnico('vendedores:deletar', (_e, id) => {
   if (id === 'admin') return { ok: false, erro: 'Não é possível excluir o admin principal' }
   let vendedores = carregarVendedores()
@@ -492,7 +489,6 @@ handleUnico('vendedores:deletar', (_e, id) => {
   salvarVendedores(vendedores)
   return { ok: true }
 })
-
 // --- Acesso aos dados conforme o perfil (leitura) ---
 function dadosParaPerfil() {
   if (sessao && sessao.admin) return carregarVisaoGerente()
@@ -509,20 +505,20 @@ function dadosParaPerfil() {
   }
   return { vendedores: [], clientes: [], vendas: [], orcamentos: [], orcamentosPerdidos: [], metaMensal: 100000 }
 }
-
 // --- Mutação: SEMPRE no arquivo do vendedor logado ---
 function dadosDoVendedor() {
   return carregarDadosVendedor(sessao.id)
 }
-
 // --- Clientes ---
+// ===== ALTERADO: ordena para ativos primeiro, arquivados no FINAL da lista =====
 handleUnico('clientes:listar', (_e, vendedorId) => {
   const dados = dadosParaPerfil()
-  if (sessao && !sessao.admin) return dados.clientes
-  if (vendedorId) return dados.clientes.filter((c) => c.vendedorId === vendedorId)
-  return dados.clientes
+  let lista = dados.clientes
+  if (sessao && sessao.admin && vendedorId) {
+    lista = dados.clientes.filter((c) => c.vendedorId === vendedorId)
+  }
+  return lista.slice().sort((a, b) => Number(!!a.arquivado) - Number(!!b.arquivado))
 })
-
 handleUnico('clientes:criar', (_e, cliente) => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
   const dados = dadosDoVendedor()
@@ -541,13 +537,14 @@ handleUnico('clientes:criar', (_e, cliente) => {
     segmento: capitalizarTexto(cliente.segmento),
     envio: cliente.envio || '',
     vendedorId: sessao.id,
-    dataCadastro: cliente.dataCadastro || new Date().toISOString().slice(0, 10)
+    dataCadastro: cliente.dataCadastro || new Date().toISOString().slice(0, 10),
+    // ===== NOVO: flag de arquivamento (padrão: ativo) =====
+    arquivado: false
   }
   dados.clientes.push(novo)
   salvarDadosVendedor(sessao.id, dados)
   return { ok: true, cliente: novo }
 })
-
 handleUnico('clientes:atualizar', (_e, cliente) => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
   const dados = dadosDoVendedor()
@@ -571,7 +568,6 @@ handleUnico('clientes:atualizar', (_e, cliente) => {
   salvarDadosVendedor(sessao.id, dados)
   return { ok: true, cliente: dados.clientes[idx] }
 })
-
 handleUnico('clientes:deletar', (_e, id) => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
   const dados = dadosDoVendedor()
@@ -579,7 +575,16 @@ handleUnico('clientes:deletar', (_e, id) => {
   salvarDadosVendedor(sessao.id, dados)
   return { ok: true }
 })
-
+// ===== NOVO: arquivar / desarquivar cliente (mantém o cadastro) =====
+handleUnico('clientes:arquivar', (_e, id, arquivado) => {
+  if (!sessao) return { ok: false, erro: 'Não autenticado' }
+  const dados = dadosDoVendedor()
+  const idx = dados.clientes.findIndex((c) => c.id === id)
+  if (idx === -1) return { ok: false, erro: 'Cliente não encontrado' }
+  dados.clientes[idx].arquivado = !!arquivado
+  salvarDadosVendedor(sessao.id, dados)
+  return { ok: true, cliente: dados.clientes[idx] }
+})
 // --- Vendas ---
 handleUnico('vendas:listar', (_e, vendedorId) => {
   const dados = dadosParaPerfil()
@@ -587,7 +592,6 @@ handleUnico('vendas:listar', (_e, vendedorId) => {
   if (vendedorId) return dados.vendas.filter((v) => v.vendedorId === vendedorId)
   return dados.vendas
 })
-
 handleUnico('vendas:listarPorMes', (_e, { vendedorId, ano, mes }) => {
   const dados = dadosParaPerfil()
   const alvo = String(ano) + '-' + String(mes).padStart(2, '0')
@@ -599,7 +603,6 @@ handleUnico('vendas:listarPorMes', (_e, { vendedorId, ano, mes }) => {
   }
   return vendas.filter((v) => String(v.data || '').slice(0, 7) === alvo)
 })
-
 handleUnico('vendas:criar', (_e, venda) => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
   const dados = dadosDoVendedor()
@@ -621,7 +624,6 @@ handleUnico('vendas:criar', (_e, venda) => {
   const metaCalc = calcularValorMeta(nova)
   return { ok: true, venda: { ...nova, valorMeta: metaCalc.meta, valorFrete: metaCalc.valorFrete } }
 })
-
 handleUnico('vendas:atualizar', (_e, venda) => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
   const dados = dadosDoVendedor()
@@ -638,7 +640,6 @@ handleUnico('vendas:atualizar', (_e, venda) => {
   const metaCalc = calcularValorMeta(atual)
   return { ok: true, venda: { ...atual, valorMeta: metaCalc.meta, valorFrete: metaCalc.valorFrete } }
 })
-
 handleUnico('vendas:deletar', (_e, id) => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
   const dados = dadosDoVendedor()
@@ -646,7 +647,6 @@ handleUnico('vendas:deletar', (_e, id) => {
   salvarDadosVendedor(sessao.id, dados)
   return { ok: true }
 })
-
 // --- Orçamentos (funil: aguardando / aprovado / recusado) ---
 handleUnico('orcamentos:listar', (_e, vendedorId) => {
   const dados = dadosParaPerfil()
@@ -654,7 +654,6 @@ handleUnico('orcamentos:listar', (_e, vendedorId) => {
   if (vendedorId) return (dados.orcamentos || []).filter((o) => o.vendedorId === vendedorId)
   return dados.orcamentos || []
 })
-
 handleUnico('orcamentos:criar', (_e, orcamento) => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
   const dados = dadosDoVendedor()
@@ -679,7 +678,6 @@ handleUnico('orcamentos:criar', (_e, orcamento) => {
   const metaCalc = calcularValorMeta(novo)
   return { ok: true, orcamento: { ...novo, valorMeta: metaCalc.meta, valorFrete: metaCalc.valorFrete } }
 })
-
 handleUnico('orcamentos:atualizar', (_e, orcamento) => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
   const dados = dadosDoVendedor()
@@ -703,7 +701,6 @@ handleUnico('orcamentos:atualizar', (_e, orcamento) => {
   const metaCalc = calcularValorMeta(dados.orcamentos[i])
   return { ok: true, orcamento: { ...dados.orcamentos[i], valorMeta: metaCalc.meta, valorFrete: metaCalc.valorFrete } }
 })
-
 // APROVAR: recebe os NOVOS números de pedido e copia o frete para a venda
 handleUnico('orcamentos:aprovar', (_e, id, info) => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
@@ -735,7 +732,6 @@ handleUnico('orcamentos:aprovar', (_e, id, info) => {
   salvarDadosVendedor(sessao.id, dados)
   return { ok: true }
 })
-
 handleUnico('orcamentos:recusar', (_e, id, info) => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
   const dados = dadosDoVendedor()
@@ -748,7 +744,6 @@ handleUnico('orcamentos:recusar', (_e, id, info) => {
   salvarDadosVendedor(sessao.id, dados)
   return { ok: true }
 })
-
 handleUnico('orcamentos:deletar', (_e, id) => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
   const dados = dadosDoVendedor()
@@ -756,20 +751,23 @@ handleUnico('orcamentos:deletar', (_e, id) => {
   salvarDadosVendedor(sessao.id, dados)
   return { ok: true }
 })
-
 // --- Insights (Dicas) ---
+// ===== ALTERADO: filtra clientes ARQUIVADOS e as vendas deles =====
 handleUnico('insights:gerar', () => {
   const dados = dadosParaPerfil()
   const estado = sessao ? carregarEstadoInsights(sessao.id) : { vistos: [], tratados: [], adiados: {} }
+  const arquivados = new Set((dados.clientes || []).filter((c) => c.arquivado).map((c) => c.id))
+  const notasRes = carregarNotas()
+  const notas = notasRes.ok ? (notasRes.dados.notas || []) : []
   return gerarInsights({
-    clientes: dados.clientes,
-    vendas: dados.vendas,
+    clientes: (dados.clientes || []).filter((c) => !c.arquivado),
+    vendas: (dados.vendas || []).filter((v) => !arquivados.has(v.clienteId)),
     orcamentosPerdidos: dados.orcamentosPerdidos,
     vendedores: dados.vendedores || [],
+    notas,
     estado
   })
 })
-
 handleUnico('insights:marcar', (_e, { acao, chave }) => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
   const atual = carregarEstadoInsights(sessao.id)
@@ -777,7 +775,6 @@ handleUnico('insights:marcar', (_e, { acao, chave }) => {
   salvarEstadoInsights(sessao.id, novo)
   return { ok: true, estado: novo }
 })
-
 // ===== INTELIGÊNCIA ARTIFICIAL — Gemini API =====
 async function listarModelosDisponiveis() {
   try {
@@ -796,7 +793,6 @@ async function listarModelosDisponiveis() {
     return []
   }
 }
-
 function calcularPadroesPorCliente(clientes, vendas) {
   const hoje = new Date()
   const porCliente = {}
@@ -868,7 +864,6 @@ function calcularPadroesPorCliente(clientes, vendas) {
   resultado.sort((a, b) => b.valorTotal - a.valorTotal)
   return resultado
 }
-
 async function analisarComGemini(dados, perfilNome) {
   const padroes = calcularPadroesPorCliente(dados.clientes, dados.vendas)
   padroes.forEach((p) => {
@@ -926,26 +921,32 @@ async function analisarComGemini(dados, perfilNome) {
   }
   return { ok: false, erro: ultimoErro }
 }
-
 // ===== Retorna a carteira de clientes do vendedor logado (para @menção) =====
+// ===== ALTERADO: não inclui clientes ARQUIVADOS =====
 handleUnico('ia:carteira', async () => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
   const dados = dadosParaPerfil()
-  const clientes = (dados.clientes || []).map((c) => ({
-    codigo: c.codigo,
-    nome: c.nome,
-    cidade: c.cidade || ''
-  }))
+  const clientes = (dados.clientes || [])
+    .filter((c) => !c.arquivado)
+    .map((c) => ({
+      codigo: c.codigo,
+      nome: c.nome,
+      cidade: c.cidade || ''
+    }))
   return { ok: true, clientes }
 })
-
+// ===== ALTERADO: a IA de análise não enxerga clientes ARQUIVADOS =====
 handleUnico('ia:analisar', async () => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
   const dados = dadosParaPerfil()
+  const arquivados = new Set((dados.clientes || []).filter((c) => c.arquivado).map((c) => c.id))
   const perfilNome = sessao.admin ? 'Gerente (todos os vendedores)' : sessao.nome
-  return analisarComGemini(dados, perfilNome)
+  return analisarComGemini({
+    ...dados,
+    clientes: (dados.clientes || []).filter((c) => !c.arquivado),
+    vendas: (dados.vendas || []).filter((v) => !arquivados.has(v.clienteId))
+  }, perfilNome)
 })
-
 // --- Backups ---
 handleUnico('backup:listar', () => listarBackups())
 handleUnico('backup:criar', () => {
@@ -973,7 +974,6 @@ handleUnico('backup:configSalvar', (_e, config) => {
   if (!sessao || !sessao.admin) return { ok: false, erro: 'Apenas o administrador pode alterar a configuração' }
   return salvarConfigBackup(config)
 })
-
 // --- Agendador do backup diário ---
 function temBackupHoje() {
   const agora = new Date()
@@ -983,7 +983,6 @@ function temBackupHoje() {
     String(agora.getDate()).padStart(2, '0')
   return listarBackups().some((b) => b.nome.indexOf('geral_' + hojeStr + '_') === 0)
 }
-
 function verificarBackupDiario() {
   try {
     const config = carregarConfigBackup()
@@ -998,7 +997,6 @@ function verificarBackupDiario() {
     console.error('Erro no backup diário:', err)
   }
 }
-
 // --- Janela ---
 handleUnico('janela:focar', (evento) => {
   const janela = BrowserWindow.fromWebContents(evento.sender)
@@ -1009,7 +1007,6 @@ handleUnico('janela:focar', (evento) => {
   }
   return { ok: true }
 })
-
 // --- Cidades (IBGE) ---
 let cacheCidades = null
 handleUnico('cidades:listar', async () => {
@@ -1028,7 +1025,6 @@ handleUnico('cidades:listar', async () => {
     return []
   }
 })
-
 // --- Consulta CNPJ (com fallback de 3 APIs) ---
 handleUnico('cnpj:consultar', async (_e, cnpj) => {
   const limpo = String(cnpj || '').replace(/\D/g, '')
@@ -1065,14 +1061,12 @@ handleUnico('cnpj:consultar', async (_e, cnpj) => {
   }
   return { ok: false, erro: 'Não foi possível consultar o CNPJ em nenhuma API. Verifique a conexão ou digite o nome manualmente.' }
 })
-
 // --- Banco de dados (admin) ---
 handleUnico('config:alterarCaminho', (_e, novoCaminho) => {
   const res = alterarCaminho(novoCaminho)
   if (res.ok) migrarDadosAntigos()
   return res
 })
-
 // --- Dados (compatibilidade) ---
 handleUnico('dados:carregar', () => dadosParaPerfil())
 handleUnico('dados:salvar', (_e, novosDados) => {
@@ -1092,7 +1086,6 @@ handleUnico('clientes:estatisticas', (_e, clienteId) => {
   const cliente = dados.clientes.find((c) => c.id === clienteId)
   return gerarEstatisticasCliente({ cliente, vendas: dados.vendas })
 })
-
 // --- Histórico de interações ---
 handleUnico('historico:listar', (_e, clienteId) => {
   const dados = dadosParaPerfil()
@@ -1114,12 +1107,10 @@ handleUnico('historico:salvar', (_e, clienteId, item) => {
   salvarDadosVendedor(sessao.id, dados)
   return { ok: true }
 })
-
 handleUnico('app:reiniciarAtualizar', () => {
   autoUpdater.quitAndInstall()
   return { ok: true }
 })
-
 // --- Janela ---
 function createWindow() {
   const win = new BrowserWindow({
@@ -1154,7 +1145,6 @@ function createWindow() {
     win.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
-
 // ===== Auto-update (electron-updater) =====
 function configurarAutoUpdate(win) {
   // Só atualiza em produção (app empacotado), nunca no "npm run dev"
@@ -1176,22 +1166,16 @@ function configurarAutoUpdate(win) {
     }
   })
   autoUpdater.autoInstallOnAppQuit = true
-  // ... o resto da função continua igual (checkForUpdates, update-downloaded, etc.)
-}
-
   // Avisa o front quando a atualização foi baixada
   autoUpdater.on('update-downloaded', () => {
     win.webContents.send('update:baixado')
   })
-
   autoUpdater.on('error', (err) => {
     console.error('Erro no auto-update:', err)
   })
-
   // Verifica atualização ao iniciar
   autoUpdater.checkForUpdatesAndNotify()
 }
-
 app.whenReady().then(() => {
   createWindow()
   configurarAutoUpdate(mainWindow)
@@ -1210,7 +1194,6 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
-
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })

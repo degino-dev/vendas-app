@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-
 const EXEMPLOS = [
   'Quem compra tubo de coleta a vácuo e o que mais posso oferecer?',
   'Quais clientes estão com orçamento aguardando há mais tempo?',
@@ -8,7 +7,6 @@ const EXEMPLOS = [
   'Qual produto tem maior giro na minha carteira e quem ainda não compra?',
   'Quais clientes mais compram reagentes de bioquímica e qual o ticket médio?'
 ]
-
 // ===== Mini-renderizador de Markdown (sem dependências) =====
 function escaparHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -62,7 +60,6 @@ function renderizarMarkdown(texto) {
   fecharCitacao()
   return blocos
 }
-
 // ===== Separa a "Sugestão de Ação Prática" do restante da resposta =====
 function separarSugestao(texto) {
   const t = String(texto || '')
@@ -79,7 +76,6 @@ function separarSugestao(texto) {
   const principal = linhas.slice(0, idx).join('\n').trim()
   return { principal, sugestao }
 }
-
 export default function Consultar({ usuario }) {
   const [pergunta, setPergunta] = useState('')
   const [resposta, setResposta] = useState('')
@@ -88,6 +84,8 @@ export default function Consultar({ usuario }) {
   const [erro, setErro] = useState('')
   const [avaliacao, setAvaliacao] = useState(null)
   const [feedbackMsg, setFeedbackMsg] = useState('')
+  // ===== NOVO: controle do modal centralizado =====
+  const [modalAberto, setModalAberto] = useState(false)
   // ===== NOVO: feedback de sucesso (toast) =====
   const [aviso, setAviso] = useState('')
   const avisoTimer = useRef(null)
@@ -107,21 +105,18 @@ export default function Consultar({ usuario }) {
   const [indiceMencao, setIndiceMencao] = useState(0)
   const [posCursor, setPosCursor] = useState(0)
   const textareaRef = useRef(null)
-
   // Carrega a carteira ao montar
   useEffect(() => {
     window.api.carteiraIA().then((res) => {
       if (res && res.ok) setClientes(res.clientes || [])
     })
   }, [])
-
   const clientesFiltrados = mostrarMencao
     ? clientes.filter((c) => {
         const busca = filtroMencao.toLowerCase()
         return !busca || String(c.nome).toLowerCase().includes(busca) || String(c.codigo).toLowerCase().includes(busca)
       }).slice(0, 8)
     : []
-
   function aoMudarPergunta(e) {
     const valor = e.target.value
     const cursor = e.target.selectionStart
@@ -145,7 +140,6 @@ export default function Consultar({ usuario }) {
       setMostrarMencao(false)
     }
   }
-
   function inserirCliente(cliente) {
     const antes = pergunta.slice(0, posCursor)
     const ultimoArroba = antes.lastIndexOf('@')
@@ -161,7 +155,6 @@ export default function Consultar({ usuario }) {
       }
     })
   }
-
   function aoTeclar(e) {
     if (mostrarMencao && clientesFiltrados.length > 0) {
       if (e.key === 'ArrowDown') {
@@ -188,7 +181,6 @@ export default function Consultar({ usuario }) {
       consultar()
     }
   }
-
   async function consultar(texto) {
     const p = (texto ?? pergunta).trim()
     if (!p) return
@@ -197,6 +189,8 @@ export default function Consultar({ usuario }) {
     setResposta('')
     setAvaliacao(null)
     setFeedbackMsg('')
+    // ===== NOVO: abre o modal imediatamente (mostra "gerando...") =====
+    setModalAberto(true)
     try {
       const res = await window.api.consultarIA(p)
       if (res && res.ok) {
@@ -212,7 +206,15 @@ export default function Consultar({ usuario }) {
       setCarregando(false)
     }
   }
-
+  // ===== NOVO: fechar o modal =====
+  function fecharModal() {
+    setModalAberto(false)
+    setCarregando(false)
+    setResposta('')
+    setErro('')
+    setAvaliacao(null)
+    setFeedbackMsg('')
+  }
   // ===== NOVO: permite trocar a avaliação (não trava) =====
   async function avaliar(nota) {
     if (!consultaId) return
@@ -237,7 +239,6 @@ export default function Consultar({ usuario }) {
       setFeedbackMsg('Falha ao salvar avaliação: ' + String(e))
     }
   }
-
   // ===== NOVO: copiar resposta =====
   async function copiarResposta() {
     const texto = resposta || ''
@@ -248,7 +249,6 @@ export default function Consultar({ usuario }) {
       mostrarAviso('Não foi possível copiar automaticamente.')
     }
   }
-
   // ===== Análise de carteira =====
   async function analisarCarteira() {
     setMsgAnalise('')
@@ -268,19 +268,15 @@ export default function Consultar({ usuario }) {
       setAnalisando(false)
     }
   }
-
   const { principal, sugestao } = separarSugestao(resposta)
-
   return (
     <div className="consultar">
       {/* ===== NOVO: toast de sucesso ===== */}
       {aviso && <div className="toast-sucesso">{aviso}</div>}
-
       <div className="section-head">
         <h2>🔎 Consultar</h2>
         <span className="total-badge">Pergunte em linguagem natural — use @ para citar um cliente</span>
       </div>
-
       {/* Botão de análise de carteira */}
       <div className="analise-carteira">
         <button
@@ -303,7 +299,6 @@ export default function Consultar({ usuario }) {
           <div className="markdown">{renderizarMarkdown(analiseIA)}</div>
         </div>
       )}
-
       <div className="consultar-pergunta">
         <div className="pergunta-wrapper">
           <textarea
@@ -339,7 +334,6 @@ export default function Consultar({ usuario }) {
           {carregando ? '🤖 Consultando...' : '🔎 Consultar'}
         </button>
       </div>
-
       <div className="consultar-exemplos">
         {EXEMPLOS.map((ex) => (
           <button key={ex} type="button" className="chip" onClick={() => { setPergunta(ex); consultar(ex) }} disabled={carregando}>
@@ -347,31 +341,51 @@ export default function Consultar({ usuario }) {
           </button>
         ))}
       </div>
-
-      {erro && <p className="form-erro">{erro}</p>}
-
-      {resposta && (
-        // ===== NOVO: limite de altura com scroll =====
-        <div className="consultar-resposta">
-          <div className="resposta-topo">
-            <h3>💡 Resposta</h3>
-            <div className="consultar-feedback">
-              <span className="feedback-rotulo">Essa resposta foi útil?</span>
-              {/* ===== NOVO: botões não travam; clicar de novo desfaz ===== */}
-              <button type="button" className={'btn-feedback ' + (avaliacao === 'bom' ? 'ativo-bom' : '')} onClick={() => avaliar('bom')} title="Resposta boa — salvar como exemplo">👍 Útil</button>
-              <button type="button" className={'btn-feedback ' + (avaliacao === 'ruim' ? 'ativo-ruim' : '')} onClick={() => avaliar('ruim')} title="Resposta não foi útil">👎 Não útil</button>
-              {/* ===== NOVO: botão copiar ===== */}
-              <button type="button" className="btn-feedback btn-copiar" onClick={copiarResposta} title="Copiar resposta">📋 Copiar</button>
+      {erro && !modalAberto && <p className="form-erro">{erro}</p>}
+      {/* ===== NOVO: MODAL CENTRALIZADO ===== */}
+      {modalAberto && (
+        <div className="modal-overlay" onClick={fecharModal}>
+          <div className="modal modal-consulta" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-consulta-topo">
+              <h3>💡 Resposta</h3>
+              <button type="button" className="btn-acao modal-fechar" onClick={fecharModal} title="Fechar">✕</button>
             </div>
+            {carregando ? (
+              // ===== NOVO: animação de "gerando resposta" =====
+              <div className="modal-gerando">
+                <span className="spinner"></span>
+                <p>🤖 Gerando sua resposta...</p>
+              </div>
+            ) : erro ? (
+              <div>
+                <p className="form-erro">{erro}</p>
+                <div className="modal-acoes">
+                  <button className="btn-secondary" onClick={fecharModal}>Fechar</button>
+                </div>
+              </div>
+            ) : (
+              <div className="modal-consulta-corpo">
+                {/* Avaliação + copiar */}
+                <div className="consultar-feedback">
+                  <span className="feedback-rotulo">Essa resposta foi útil?</span>
+                  <button type="button" className={'btn-feedback ' + (avaliacao === 'bom' ? 'ativo-bom' : '')} onClick={() => avaliar('bom')} title="Resposta boa — salvar como exemplo">👍 Útil</button>
+                  <button type="button" className={'btn-feedback ' + (avaliacao === 'ruim' ? 'ativo-ruim' : '')} onClick={() => avaliar('ruim')} title="Resposta não foi útil">👎 Não útil</button>
+                  <button type="button" className="btn-feedback btn-copiar" onClick={copiarResposta} title="Copiar resposta">📋 Copiar</button>
+                </div>
+                {feedbackMsg && <p className="feedback-msg">{feedbackMsg}</p>}
+                {sugestao && (
+                  <div className="sugestao-card">
+                    <strong className="sugestao-titulo">🎯 Sugestão de Ação Prática</strong>
+                    <div className="markdown">{renderizarMarkdown(sugestao)}</div>
+                  </div>
+                )}
+                {principal && <div className="markdown resposta-principal">{renderizarMarkdown(principal)}</div>}
+                <div className="modal-acoes">
+                  <button className="btn-primary" onClick={fecharModal}>Fechar</button>
+                </div>
+              </div>
+            )}
           </div>
-          {feedbackMsg && <p className="feedback-msg">{feedbackMsg}</p>}
-          {sugestao && (
-            <div className="sugestao-card">
-              <strong className="sugestao-titulo">🎯 Sugestão de Ação Prática</strong>
-              <div className="markdown">{renderizarMarkdown(sugestao)}</div>
-            </div>
-          )}
-          {principal && <div className="markdown resposta-principal">{renderizarMarkdown(principal)}</div>}
         </div>
       )}
     </div>

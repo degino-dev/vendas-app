@@ -1,19 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { fmtValor } from '../utils/format'
-
 // Rótulo e ícone de cada tipo de dica (clareza imediata)
 const TIPO_INFO = {
   risco: { label: '⚠️ Em risco', classe: 'dica-risco' },
   momento: { label: '🎯 Momento de compra', classe: 'dica-momento' },
   padrao: { label: '📊 Padrão', classe: 'dica-padrao' },
-  cross: { label: '🔗 Cross-sell', classe: 'dica-cross' }
+  cross: { label: '🔗 Cross-sell', classe: 'dica-cross' },
+  ranking: { label: '🏆 Ranking', classe: 'dica-ranking' },
+  sazonal: { label: '📅 Sazonal', classe: 'dica-sazonal' }
 }
-
 export default function Insights({ usuario }) {
   const [dados, setDados] = useState(null)
   const [carregando, setCarregando] = useState(true)
   const [erro, setErro] = useState('')
-  // ===== NOVO: feedback de sucesso (toast) =====
+  // ===== feedback de sucesso (toast) =====
   const [aviso, setAviso] = useState('')
   const avisoTimer = useRef(null)
   const mostrarAviso = (msg) => {
@@ -21,19 +21,25 @@ export default function Insights({ usuario }) {
     if (avisoTimer.current) clearTimeout(avisoTimer.current)
     avisoTimer.current = setTimeout(() => setAviso(''), 3000)
   }
-  // ===== NOVO: filtro por tipo de dica =====
+  // ===== filtro por tipo de dica =====
   const [filtroTipo, setFiltroTipo] = useState(null)
-  // ===== NOVO: controle de qual ação está processando =====
+  // ===== controle de qual ação está processando =====
   const [processando, setProcessando] = useState('')
-
   function carregar() {
     setCarregando(true)
     setErro('')
-    // ===== CORREÇÃO: .catch + .finally (nunca trava) =====
     window.api
       .gerarInsights()
       .then((res) => {
         setDados(res)
+        // ===== marca as dicas como vistas ao abrir =====
+        if (res && res.dicas) {
+          for (const d of res.dicas) {
+            if (d.novo) {
+              window.api.marcarInsight({ acao: 'ver', chave: d.tipo + ':' + d.clienteId })
+            }
+          }
+        }
       })
       .catch(() => {
         setErro('Não foi possível carregar as dicas. Tente novamente.')
@@ -42,31 +48,26 @@ export default function Insights({ usuario }) {
         setCarregando(false)
       })
   }
-
   useEffect(() => {
     carregar()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [usuario])
-
   async function marcar(acao, chave) {
-    // ===== NOVO: evita clique duplo =====
     if (processando) return
     setProcessando(chave)
     try {
       await window.api.marcarInsight({ acao, chave })
-      // ===== NOVO: feedback de sucesso =====
       mostrarAviso(acao === 'tratar' ? '✅ Dica tratada!' : '⏸️ Dica adiada.')
-      carregar() // recarrega para refletir o novo estado
+      carregar()
     } catch {
       mostrarAviso('Erro ao processar a dica. Tente novamente.')
     } finally {
       setProcessando('')
     }
   }
-
-  // ===== NOVO: contagem por tipo (para o filtro e resumo) =====
+  // ===== contagem por tipo (para o filtro e resumo) =====
   const contagemTipos = useMemo(() => {
-    const cont = { risco: 0, momento: 0, padrao: 0, cross: 0 }
+    const cont = { risco: 0, momento: 0, padrao: 0, cross: 0, ranking: 0, sazonal: 0 }
     if (dados && dados.dicas) {
       for (const d of dados.dicas) {
         if (cont[d.tipo] !== undefined) cont[d.tipo]++
@@ -74,14 +75,12 @@ export default function Insights({ usuario }) {
     }
     return cont
   }, [dados])
-
-  // ===== NOVO: dicas filtradas por tipo =====
+  // ===== dicas filtradas por tipo =====
   const dicasFiltradas = useMemo(() => {
     if (!dados || !dados.dicas) return []
     if (!filtroTipo) return dados.dicas
     return dados.dicas.filter((d) => d.tipo === filtroTipo)
   }, [dados, filtroTipo])
-
   if (carregando) {
     return (
       <div className="painel">
@@ -93,7 +92,6 @@ export default function Insights({ usuario }) {
       </div>
     )
   }
-
   if (erro) {
     return (
       <div className="painel">
@@ -103,7 +101,6 @@ export default function Insights({ usuario }) {
       </div>
     )
   }
-
   if (!dados || !dados.dicas || dados.dicas.length === 0) {
     return (
       <div className="painel">
@@ -113,19 +110,21 @@ export default function Insights({ usuario }) {
       </div>
     )
   }
-
-  const tipoClasse = { risco: 'dica-risco', momento: 'dica-momento', padrao: 'dica-padrao', cross: 'dica-cross' }
-
+  const tipoClasse = {
+    risco: 'dica-risco',
+    momento: 'dica-momento',
+    padrao: 'dica-padrao',
+    cross: 'dica-cross',
+    ranking: 'dica-ranking',
+    sazonal: 'dica-sazonal'
+  }
   return (
     <div className="painel">
-      {/* ===== NOVO: toast de sucesso ===== */}
       {aviso && <div className="toast-sucesso">{aviso}</div>}
-
       <div className="insights-head">
         <h2>💡 Dicas do dia</h2>
         <button className="btn-secondary" onClick={carregar} title="Recarregar dicas">🔄 Atualizar</button>
       </div>
-
       <div className="insights-resumo">
         <span>Vendas: {dados.resumo.totalVendas}</span>
         <span>Receita: {fmtValor(dados.resumo.receitaTotal)}</span>
@@ -133,8 +132,7 @@ export default function Insights({ usuario }) {
         <span>Clientes em risco: {dados.resumo.clientesEmRisco}</span>
         {dados.resumo.novas > 0 && <span className="insights-novas">{dados.resumo.novas} novas</span>}
       </div>
-
-      {/* ===== NOVO: filtro por tipo de dica ===== */}
+      {/* filtro por tipo de dica */}
       <div className="insights-filtros">
         <button
           className={'insights-filtro ' + (filtroTipo === null ? 'ativo' : '')}
@@ -152,7 +150,6 @@ export default function Insights({ usuario }) {
           </button>
         ))}
       </div>
-
       <div className="insights-lista">
         {dicasFiltradas.map((d) => {
           const info = TIPO_INFO[d.tipo] || { label: d.tipo, classe: '' }
@@ -162,7 +159,6 @@ export default function Insights({ usuario }) {
             <div key={chave} className={'dica ' + (tipoClasse[d.tipo] || '') + (d.novo ? ' dica-nova' : '')}>
               <div className="dica-cabecalho">
                 {usuario.admin && d.vendedorNome && <span className="dica-vendedor">👤 {d.vendedorNome}</span>}
-                {/* ===== NOVO: tag de texto do tipo ===== */}
                 <span className={'dica-tag ' + (tipoClasse[d.tipo] || '')}>{info.label}</span>
                 <strong>{d.titulo}</strong>
                 {d.novo && <span className="selo-novo">NOVO</span>}

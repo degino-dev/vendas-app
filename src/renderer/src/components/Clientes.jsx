@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { confirmar } from '../utils/confirmar'
 import { fmtData, fmtDataHora as fmtDataHoraHist, parseData, fmtCnpj } from '../utils/format'
 import ClienteDetalhe from './ClienteDetalhe'
-
 const ROTULO_STATUS = {
   'ativo': 'Ativo',
   'atencao': 'Atenção',
@@ -16,11 +15,9 @@ const ROTULOS_TIPO_HIST = {
   proposta: '📄 Proposta',
   obs: '📝 Observação'
 }
-
 const formVazio = () => ({
   codigo: '', nome: '', cnpj: '', email: '', whats: '', cidade: '', segmento: ''
 })
-
 function Clientes({ usuario }) {
   const [clientes, setClientes] = useState([])
   const [vendas, setVendas] = useState([])
@@ -115,7 +112,12 @@ function Clientes({ usuario }) {
         }
         return { ...c, primeiraCompra, ultimaCompra, diasInativo, status, abc, totalGasto: totalPorCliente[c.id] || 0 }
       })
-      .sort((a, b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'))
+      // ===== ALTERADO: ativos primeiro, arquivados no FINAL =====
+      .sort((a, b) => {
+        const arq = Number(!!a.arquivado) - Number(!!b.arquivado)
+        if (arq !== 0) return arq
+        return String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR')
+      })
   }, [clientes, vendas])
   const contagemStatus = useMemo(() => {
     const cont = { ativo: 0, atencao: 0, inativo: 0, 'sem-compra': 0 }
@@ -242,6 +244,21 @@ function Clientes({ usuario }) {
     setClientes((prev) => prev.filter((c) => c.id !== id))
     // ===== NOVO: feedback de sucesso =====
     mostrarAviso('🗑️ Cliente excluído.')
+  }
+  // ===== NOVO: arquivar / desarquivar cliente =====
+  async function alternarArquivar(cliente) {
+    const novoEstado = !cliente.arquivado
+    const confirmado = confirmar(
+      novoEstado
+        ? 'Arquivar este cliente? Ele ficará no final da lista e não aparecerá nas dicas/IA.'
+        : 'Desarquivar este cliente?'
+    )
+    if (!confirmado) return
+    const res = await window.api.arquivarCliente(cliente.id, novoEstado)
+    if (res && res.ok) {
+      setClientes((prev) => prev.map((c) => (c.id === cliente.id ? { ...c, arquivado: novoEstado } : c)))
+      mostrarAviso(novoEstado ? '📦 Cliente arquivado.' : '✅ Cliente desarquivado.')
+    }
   }
   const cardsPainel = [
     { status: 'ativo', rotulo: 'Ativos', cor: 'verde' },
@@ -452,12 +469,14 @@ function Clientes({ usuario }) {
               {clientesFiltrados.map((c) => {
                 const vend = vendedorPorId(c.vendedorId)
                 return (
-                  <tr key={c.id}>
+                  <tr key={c.id} className={c.arquivado ? 'linha-arquivada' : ''}>
                     <td className="rank">{c.codigo}</td>
                     <td>
                       <button className="link-cliente" onClick={() => setClienteSelecionado(c.id)}>
                         {c.nome}
                       </button>
+                      {/* ===== NOVO: badge de arquivado ===== */}
+                      {c.arquivado && <span className="badge-arquivado" title="Arquivado">📦</span>}
                     </td>
                     <td>
                       <button
@@ -466,6 +485,14 @@ function Clientes({ usuario }) {
                         title="Ver interações com este cliente"
                       >
                         🕓
+                      </button>
+                      {/* ===== NOVO: botão de arquivar ao lado do histórico ===== */}
+                      <button
+                        className={`btn-acao btn-arquivar ${c.arquivado ? 'ativo' : ''}`}
+                        onClick={() => alternarArquivar(c)}
+                        title={c.arquivado ? 'Desarquivar cliente' : 'Arquivar cliente'}
+                      >
+                        📦
                       </button>
                     </td>
                     {usuario.admin && <td>{vend ? vend.nome : '-'}</td>}

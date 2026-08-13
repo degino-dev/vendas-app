@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import { fmtMoeda, fmtCnpj, fmtFone, fmtDataHora, fmtData } from '../utils/format'
-
 const ROTULOS_TIPO = {
   ligacao: '📞 Liguei',
   promocao: '🎁 Promoção',
@@ -8,12 +7,10 @@ const ROTULOS_TIPO = {
   proposta: '📄 Proposta',
   obs: '📝 Observação'
 }
-
 const STATUS_ORC = {
   aprovado: { label: '✅ Aprovado', classe: 'status-aprovado' },
   recusado: { label: '❌ Recusado', classe: 'status-recusado' }
 }
-
 export default function ClienteDetalhe({ clienteId, onVoltar }) {
   const [dados, setDados] = useState(null)
   const [carregando, setCarregando] = useState(true)
@@ -35,10 +32,12 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
   const [menosComprados, setMenosComprados] = useState([])
   const [carregandoProdutos, setCarregandoProdutos] = useState(false)
   const [erroProdutos, setErroProdutos] = useState('')
+  // ===== NOVO: filtro de ano das notas (total / 2025 / 2026) =====
+  const [anoFiltro, setAnoFiltro] = useState('total')
+const [anosDisponiveis, setAnosDisponiveis] = useState([])
   // Orçamentos aprovados e recusados
   const [orcamentos, setOrcamentos] = useState([])
   const [carregandoOrc, setCarregandoOrc] = useState(false)
-
   useEffect(() => {
     let ativo = true
     setCarregando(true)
@@ -63,7 +62,6 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
       })
     return () => { ativo = false }
   }, [clienteId])
-
   // Carrega o histórico automaticamente (sempre visível)
   useEffect(() => {
     if (!window.api || typeof window.api.historicoCliente !== 'function') {
@@ -75,8 +73,7 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
       .then((res) => setHistorico(Array.isArray(res) ? res : []))
       .catch((err) => { console.error('Erro ao carregar histórico:', err); setHistorico([]) })
   }, [clienteId])
-
-  // Carrega o Top de produtos quando o cliente é carregado (usa o codigo)
+  // ===== ALTERADO: carrega o Top de produtos passando o ano filtrado =====
   useEffect(() => {
     if (!dados || !dados.ok || !dados.cliente || !dados.cliente.codigo) return
     const codigo = String(dados.cliente.codigo)
@@ -87,7 +84,7 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
     setCarregandoProdutos(true)
     setErroProdutos('')
     window.api
-      .notasTopCliente(codigo)
+      .notasTopCliente(codigo, anoFiltro)
       .then((res) => {
         if (res && res.ok) {
           setMaisComprados(res.maisComprados || [])
@@ -101,7 +98,19 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
         setErroProdutos('Falha ao carregar os produtos do notas.json.')
       })
       .finally(() => setCarregandoProdutos(false))
-  }, [dados])
+  }, [dados, anoFiltro])
+  
+  // Carrega os anos disponíveis nas notas (seletor dinâmico)
+useEffect(() => {
+  if (!window.api || typeof window.api.notasAnos !== 'function') return
+  window.api
+    .notasAnos()
+    .then((res) => {
+      if (res && res.ok) setAnosDisponiveis(res.anos || [])
+    })
+    .catch((err) => console.error('Erro ao carregar anos das notas:', err))
+}, [])
+
 
   // Carrega orçamentos aprovados e recusados deste cliente
   useEffect(() => {
@@ -119,7 +128,6 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
       .catch((err) => { console.error('Erro ao carregar orçamentos:', err); setOrcamentos([]) })
       .finally(() => setCarregandoOrc(false))
   }, [clienteId])
-
   const adicionarHistorico = () => {
     const desc = novaDesc.trim()
     if (!desc) return
@@ -140,7 +148,6 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
       .catch((err) => { console.error('Erro ao salvar histórico:', err); setErro('Falha ao salvar a interação.') })
       .finally(() => setSalvando(false))
   }
-
   if (carregando) {
     return (
       <div className="painel">
@@ -173,7 +180,6 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
       </div>
     )
   }
-
   const c = dados.cliente
   const e = dados.estatisticas
   const saudeMeta = {
@@ -183,7 +189,6 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
     risco: { label: '🔴 Risco', classe: 'saude-risco' }
   }
   const saude = saudeMeta[e.saude] || { label: e.saude || '—', classe: '' }
-
   // ===== NOVO: sugestão de próxima ação baseada na saúde do cliente =====
   const proximaAcao = () => {
     if (e.saude === 'risco') {
@@ -198,12 +203,10 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
     return { texto: 'Cliente ativo: aproveite para oferecer cross-sell dos produtos menos recorrentes.', classe: 'acao-ativo' }
   }
   const acao = proximaAcao()
-
   return (
     <div className="painel">
       {/* ===== NOVO: toast de sucesso ===== */}
       {aviso && <div className="toast-sucesso">{aviso}</div>}
-
       <div className="cliente-detalhe-topo">
         <button className="btn-voltar" onClick={onVoltar}>← Voltar</button>
         <div className="cliente-badges">
@@ -211,14 +214,11 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
           <span className={'badge badge-abc abc-' + e.classeAbc}>Curva {e.classeAbc}</span>
         </div>
       </div>
-
       <h2 className="cliente-titulo">{c.nome}</h2>
-
       {/* ===== NOVO: sugestão de próxima ação ===== */}
       <div className={'proxima-acao ' + acao.classe}>
         🎯 <strong>Próxima ação:</strong> {acao.texto}
       </div>
-
       {/* Dados cadastrais */}
       <div className="cliente-info-grid">
         {c.codigo && <div className="info-card"><span className="info-label">ID</span><span>{c.codigo}</span></div>}
@@ -234,7 +234,6 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
         {c.cidade && <div className="info-card"><span className="info-label">Cidade</span><span>{c.cidade}</span></div>}
         {c.segmento && <div className="info-card"><span className="info-label">Segmento</span><span>{c.segmento}</span></div>}
       </div>
-
       {/* Indicadores */}
       <div className="stats-grid">
         <div className="stat-card"><strong>{e.totalVendas}</strong><span>Vendas</span></div>
@@ -246,13 +245,11 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
         <div className="stat-card stat-destaque"><strong>{e.diasDesdeUltima != null ? e.diasDesdeUltima + ' dias' : '—'}</strong><span>Desde última compra</span></div>
         <div className="stat-card"><strong>{fmtMoeda(e.totalAnoAtual)}</strong><span>Total no ano ({new Date().getFullYear()})</span></div>
       </div>
-
       {e.variacaoAnual !== null && (
         <div className={'variacao ' + (e.variacaoAnual >= 0 ? 'variacao-ok' : 'variacao-ruim')}>
           {e.variacaoAnual >= 0 ? '▲' : '▼'} {Math.abs(e.variacaoAnual)}% vs ano anterior
         </div>
       )}
-
       <div className="cliente-secao">
         <h3>Últimas compras</h3>
         {e.ultimasCompras.length === 0 ? (
@@ -278,7 +275,6 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
           </div>
         )}
       </div>
-
       {/* Orçamentos aprovados e recusados */}
       <div className="cliente-secao">
         <h3>📋 Orçamentos aprovados e recusados</h3>
@@ -328,7 +324,18 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
           </div>
         )}
       </div>
-
+      {/* ===== NOVO: filtro de ano das notas ===== */}
+      <div className="cliente-secao">
+        <div className="top-filtro-ano">
+          <label>Período das notas:</label>
+          <select value={anoFiltro} onChange={(e) => setAnoFiltro(e.target.value)}>
+  <option value="total">Total (todos os anos)</option>
+  {anosDisponiveis.map((ano) => (
+    <option key={ano} value={ano}>{ano}</option>
+  ))}
+</select>
+        </div>
+      </div>
       {/* Top produtos (notas.json) */}
       <div className="cliente-secao">
         <h3>📊 Produtos mais comprados</h3>
@@ -351,7 +358,6 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
           </ol>
         )}
       </div>
-
       <div className="cliente-secao">
         <h3>📉 Produtos menos recorrentes</h3>
         {carregandoProdutos ? (
@@ -373,7 +379,6 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
           </ol>
         )}
       </div>
-
       {/* Histórico de interações — sempre visível */}
       <div className="cliente-secao historico-secao">
         <h3>📋 Histórico de Interações</h3>

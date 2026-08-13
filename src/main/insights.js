@@ -58,10 +58,81 @@ function formatarMoeda(v) {
 function chaveDica(d) {
   return d.tipo + ':' + d.clienteId
 }
+// ===== Ranking de clientes por mês (para comparar Top 20) =====
+function rankingPorMes(vendas) {
+  const porMes = {}
+  for (const v of vendas) {
+    const d = normalizarData(v.data)
+    if (!d) continue
+    const chave = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+    if (!porMes[chave]) porMes[chave] = {}
+    const valor = Number(v.valorInsumos || 0) + Number(v.valorEquipamento || 0)
+    porMes[chave][v.clienteId] = (porMes[chave][v.clienteId] || 0) + valor
+  }
+  const rankings = {}
+  Object.keys(porMes).forEach((chave) => {
+    rankings[chave] = Object.keys(porMes[chave])
+      .map((cid) => ({ clienteId: cid, total: porMes[chave][cid] }))
+      .sort((a, b) => b.total - a.total)
+  })
+  return rankings
+}
+// ===== Produtos sazonais (notas fiscais históricas) =====
+// Retorna até 3 produtos cujo mês de pico é o mês atual e que vendem
+// bem acima da média (índice >= 1.8), com histórico em 2+ anos.
+function calcularSazonais(notas, hoje) {
+  const NOMES = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro']
+  const mesAtualNum = hoje.getMonth() + 1
+  const mapa = {}
+  ;(notas || []).forEach(function (nota) {
+    const d = nota && normalizarData(nota.data)
+    if (!d) return
+    const ano = d.getFullYear()
+    const mes = d.getMonth() + 1
+    ;(nota.produtos || []).forEach(function (p) {
+      if (!p || !p.codigo) return
+      const chave = String(p.codigo)
+      if (!mapa[chave]) mapa[chave] = { codigo: chave, descricao: p.descricao || '', anos: {}, porMes: {}, total: 0 }
+      const prod = mapa[chave]
+      if (!prod.descricao && p.descricao) prod.descricao = p.descricao
+      prod.anos[ano] = true
+      prod.porMes[mes] = (prod.porMes[mes] || 0) + (Number(p.quantidade) || 0)
+      prod.total += Number(p.quantidade) || 0
+    })
+  })
+  const resultado = []
+  Object.keys(mapa).forEach(function (chave) {
+    const prod = mapa[chave]
+    if (Object.keys(prod.anos).length < 2) return       // precisa de 2+ anos de histórico
+    if (prod.total <= 0) return
+    const mesesComVenda = Object.keys(prod.porMes).length
+    if (mesesComVenda < 4) return                        // precisa aparecer em 4+ meses
+    const media = prod.total / mesesComVenda
+    if (media <= 0) return
+    let picoMes = null, picoQtd = 0
+    Object.keys(prod.porMes).forEach(function (m) {
+      if (prod.porMes[m] > picoQtd) { picoQtd = prod.porMes[m]; picoMes = Number(m) }
+    })
+    if (picoMes !== mesAtualNum) return                  // só interessa o mês de pico = mês atual
+    const indice = picoQtd / media
+    if (indice < 1.8) return                             // vende pelo menos 80% acima da média
+    resultado.push({
+      codigo: prod.codigo,
+      descricao: prod.descricao,
+      indice: Math.round(indice * 10) / 10,
+      picoQtd: Math.round(picoQtd),
+      media: Math.round(media * 10) / 10,
+      mes: NOMES[picoMes - 1]
+    })
+  })
+  resultado.sort(function (a, b) { return b.indice - a.indice })
+  return resultado.slice(0, 3)
+}
 export function gerarInsights(opcoes) {
-  var clientes = opcoes.clientes || []
+  var clientes = (opcoes.clientes || []).filter(function (c) { return !c.arquivado })
   var vendas = opcoes.vendas || []
   var vendedores = opcoes.vendedores || []
+  var notas = opcoes.notas || []
   var estado = opcoes.estado || { vistos: [], tratados: [], adiados: {} }
   var hoje = opcoes.hoje || new Date()
   hoje.setHours(0, 0, 0, 0)
@@ -96,14 +167,15 @@ export function gerarInsights(opcoes) {
     var ticket = receita / (valores.length || 1)
     resumo.receitaTotal += receita
     if (datas.length === 0) return
-    var ultima = datas[datas.length - 1]
-    var diasDesde = diasEntre(ultima, hoje)
+    // Pega a data MAIS RECENTE (ordena decrescente)
+    var ultima = datas.length ? datas.slice().sort(function (a, b) { return b - a })[0] : null
+    var diasDesde = ultima ? diasEntre(ultima, hoje) : null
     var intervalo = intervaloMedio(datas)
     var temEquipamento = lista.some(function (v) { return v.pedidoEquipamento })
     var temInsumo = lista.some(function (v) { return v.pedidoInsumos })
     if (datas.length > 1) resumo.clientesComMaisDeUmaCompra++
     // 1) Cliente em risco (prioridade maxima)
-    if (intervalo && diasDesde > Math.round(intervalo * 1.5) && diasDesde > 15) {
+    if (intervalo && diasDesde !== null && diasDesde > Math.round(intervalo * 1.5) && diasDesde > 15) {
       resumo.clientesEmRisco++
       dicas.push({
         prioridade: 3,
@@ -116,7 +188,7 @@ export function gerarInsights(opcoes) {
       return
     }
     // 2) Momento ideal de contato
-    if (intervalo && diasDesde >= intervalo) {
+    if (intervalo && diasDesde !== null && diasDesde >= intervalo) {
       dicas.push({
         prioridade: 2,
         tipo: 'momento',
@@ -154,6 +226,68 @@ export function gerarInsights(opcoes) {
       })
     }
   })
+  // ===== Dicas de ranking Top 20 =====
+  var rankings = rankingPorMes(vendas)
+  var mesAtual = hoje.getFullYear() + '-' + String(hoje.getMonth() + 1).padStart(2, '0')
+  var rankingAtual = rankings[mesAtual] || []
+  var posAtual = {}
+  rankingAtual.forEach(function (r, i) { posAtual[r.clienteId] = i + 1 })
+  // Posição histórica média (meses anteriores, apenas quem esteve no Top 20)
+  var historicoPos = {}
+  Object.keys(rankings).forEach(function (chave) {
+    if (chave === mesAtual) return
+    rankings[chave].slice(0, 20).forEach(function (r, i) {
+      if (!historicoPos[r.clienteId]) historicoPos[r.clienteId] = []
+      historicoPos[r.clienteId].push(i + 1)
+    })
+  })
+  var mediaPos = {}
+  Object.keys(historicoPos).forEach(function (cid) {
+    var arr = historicoPos[cid]
+    mediaPos[cid] = Math.round(arr.reduce(function (s, x) { return s + x }, 0) / arr.length)
+  })
+  // 1) Clientes que costumavam estar no Top 20 e NÃO apareceram este mês
+  Object.keys(mediaPos).forEach(function (cid) {
+    if (posAtual[cid] !== undefined) return
+    var cliente = mapaClientes[cid]
+    if (!cliente) return
+    dicas.push({
+      prioridade: 2,
+      tipo: 'ranking',
+      clienteId: cid,
+      titulo: 'Saiu do Top 20: ' + cliente.nome,
+      texto: 'Esteve no Top 20 (posição média ' + mediaPos[cid] + ') nos meses anteriores, mas ainda não apareceu no ranking deste mês.',
+      detalhe: 'Cliente que costuma estar entre os maiores compradores. Vale um contato para retomar o volume.'
+    })
+  })
+  // 2) Clientes que CAÍRAM de posição no ranking atual vs. histórico
+  Object.keys(posAtual).forEach(function (cid) {
+    if (mediaPos[cid] === undefined) return
+    var queda = posAtual[cid] - mediaPos[cid]
+    if (queda < 3) return  // só alerta se caiu 3+ posições
+    var cliente = mapaClientes[cid]
+    if (!cliente) return
+    dicas.push({
+      prioridade: 1,
+      tipo: 'ranking',
+      clienteId: cid,
+      titulo: 'Caiu no ranking: ' + cliente.nome,
+      texto: 'Costumava ficar na posição ' + mediaPos[cid] + ' e este mês está na ' + posAtual[cid] + ' (caiu ' + queda + ' posições).',
+      detalhe: 'Queda no Top 20. Verifique se o cliente reduziu o volume de compras ou migrou para outro fornecedor.'
+    })
+  })
+  // ===== Dicas de produtos sazonais (notas fiscais históricas) =====
+  var sazonais = calcularSazonais(notas, hoje)
+  sazonais.forEach(function (s) {
+    dicas.push({
+      prioridade: 1,
+      tipo: 'sazonal',
+      clienteId: 'saz-' + s.codigo,
+      titulo: 'Produto sazonal: ' + s.descricao,
+      texto: 'No mês de ' + s.mes + ', este produto costuma vender ' + s.indice + 'x acima da média (' + s.picoQtd + ' unidades vs média de ' + s.media + '). Aproveite a época para ofertar.',
+      detalhe: 'Produto com alta sazonalidade neste mês. Vale antecipar o estoque e oferecer aos clientes que compram itens relacionados.'
+    })
+  })
   // Aplica estado: marca "novo", remove tratados, respeita adiados
   var hojeStr = formatarISO(hoje)
   var resultado = []
@@ -182,7 +316,21 @@ export function gerarInsights(opcoes) {
     return 0
   })
   resumo.ticketMedio = resumo.totalVendas ? Math.round(resumo.receitaTotal / resumo.totalVendas) : 0
-  return { dicas: resultado.slice(0, 8), resumo: resumo }
+  // ===== Rodízio automático das dicas =====
+  // As de prioridade 3 (risco) SEMPRE aparecem. As demais rotacionam por dia,
+  // para o painel variar mesmo sem o vendedor clicar em Tratar/Adiar.
+  var prioritarias = resultado.filter(function (d) { return d.prioridade === 3 })
+  var demais = resultado.filter(function (d) { return d.prioridade < 3 })
+  var diaRot = hoje.getDate()
+  // Rotaciona as "demais" de forma estável (hash do cliente + dia do mês)
+  demais.sort(function (a, b) {
+    var ha = (a.clienteId || '') + ':' + diaRot
+    var hb = (b.clienteId || '') + ':' + diaRot
+    return ha < hb ? -1 : ha > hb ? 1 : 0
+  })
+  // Mostra: todas as prioritárias + as primeiras "demais" até completar 12
+  var selecionadas = prioritarias.concat(demais).slice(0, 12)
+  return { dicas: selecionadas, resumo: resumo }
 }
 export function atualizarEstado(estado, acao, chave) {
   var novo = {
@@ -226,6 +374,9 @@ export function gerarEstatisticasCliente(opcoes) {
   var anoAtual = hoje.getFullYear()
   var totalAnoAtual = 0
   var totalAnoAnterior = 0
+  // Comparação justa (mesmo período do ano)
+  var mesAtual = hoje.getMonth() + 1  // 1-12
+  var diaAtual = hoje.getDate()
   ordenadas.forEach(function (v) {
     var vi = Number(v.valorInsumos || 0)
     var ve = Number(v.valorEquipamento || 0)
@@ -235,12 +386,22 @@ export function gerarEstatisticasCliente(opcoes) {
     var d = normalizarData(v.data)
     if (d) datas.push(d)
     var ano = d ? d.getFullYear() : null
-    if (ano === anoAtual) totalAnoAtual += vi + ve
-    if (ano === anoAtual - 1) totalAnoAnterior += vi + ve
+    if (ano === anoAtual) {
+      totalAnoAtual += vi + ve
+    } else if (ano === anoAtual - 1) {
+      // Só conta vendas do ano anterior ATÉ o mesmo dia de hoje
+      // (ex.: hoje é 13/08 → compara com 01/01/2025 até 13/08/2025)
+      var mes = d.getMonth() + 1
+      var dia = d.getDate()
+      if (mes < mesAtual || (mes === mesAtual && dia <= diaAtual)) {
+        totalAnoAnterior += vi + ve
+      }
+    }
   })
   var ticketMedio = totalVendas ? totalGasto / totalVendas : 0
   var intervalo = intervaloMedio(datas)
-  var ultima = datas.length ? datas[datas.length - 1] : null
+  // datas está ordenado do mais recente para o mais antigo, então datas[0] é a compra MAIS RECENTE
+  var ultima = datas.length ? datas[0] : null
   var diasDesdeUltima = ultima ? diasEntre(ultima, hoje) : null
   // Frequencia: media de compras por mes (ultimos 12 meses)
   var frequenciaMensal = 0

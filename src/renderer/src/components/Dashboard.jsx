@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fmtValor, fmtPct, MESES_NOME as MESES, parseData, semanaAtualRange } from '../utils/format'
 import { valorFreteDe, valorPedido, dividirFrete } from '../utils/financeiro'
-
 const MULT = { mes: 1, trimestre: 3, ano: 12 }
-
 // ===== Calcula o período anterior equivalente (para variação) =====
 function periodoAnterior(tipoPeriodo, mes, trimestre, ano) {
   if (tipoPeriodo === 'mes') {
@@ -16,9 +14,27 @@ function periodoAnterior(tipoPeriodo, mes, trimestre, ano) {
   }
   return { tipoPeriodo, mes, trimestre, ano: ano - 1 }
 }
-function vendaNoPeriodo(v, tipoPeriodo, mes, trimestre, ano) {
+// ===== NOVO: limite de comparação justa =====
+// Quando o período selecionado é o ATUAL (ainda em andamento, ex.: ano de 2026 em agosto),
+// corta as vendas de HOJE para trás nos DOIS períodos, comparando o mesmo recorte.
+// Ex.: jan–ago/2026 vs jan–ago/2025 (em vez de 8 meses vs 12 meses).
+function limiteComparacao(tipoPeriodo, mes, trimestre, ano) {
+  const hoje = new Date()
+  const anoAtual = hoje.getFullYear()
+  const mesAtual = hoje.getMonth() + 1
+  const trimAtual = Math.floor((mesAtual - 1) / 3) + 1
+  let ehAtual = false
+  if (tipoPeriodo === 'mes') ehAtual = ano === anoAtual && mes === mesAtual
+  else if (tipoPeriodo === 'trimestre') ehAtual = ano === anoAtual && trimestre === trimAtual
+  else ehAtual = ano === anoAtual
+  if (!ehAtual) return null
+  return new Date(anoAtual, mesAtual - 1, hoje.getDate(), 23, 59, 59)
+}
+// ===== ALTERADO: aceita o parâmetro "limite" (corte da data de hoje) =====
+function vendaNoPeriodo(v, tipoPeriodo, mes, trimestre, ano, limite) {
   const m = parseData(v.data)
   if (!m) return false
+  if (limite && m > limite) return false
   const vAno = m.getFullYear()
   const vMes = m.getMonth() + 1
   if (tipoPeriodo === 'mes') return vAno === ano && vMes === mes
@@ -28,7 +44,6 @@ function vendaNoPeriodo(v, tipoPeriodo, mes, trimestre, ano) {
   }
   return vAno === ano
 }
-
 function Dashboard({ usuario }) {
   const [vendas, setVendas] = useState([])
   const [clientes, setClientes] = useState([])
@@ -64,14 +79,16 @@ function Dashboard({ usuario }) {
     return () => { ativo = false }
   }, [usuario])
   const clientePorId = (id) => clientes.find((c) => c.id === id)
+  // ===== ALTERADO: aplica o limite de comparação justa =====
+  const limite = limiteComparacao(tipoPeriodo, mes, trimestre, ano)
   const vendasFiltradas = useMemo(() => {
-    return vendas.filter((v) => vendaNoPeriodo(v, tipoPeriodo, mes, trimestre, ano))
-  }, [vendas, tipoPeriodo, mes, trimestre, ano])
+    return vendas.filter((v) => vendaNoPeriodo(v, tipoPeriodo, mes, trimestre, ano, limite))
+  }, [vendas, tipoPeriodo, mes, trimestre, ano, limite])
   // ===== Vendas do período anterior (para variação) =====
   const vendasAnteriores = useMemo(() => {
     const ant = periodoAnterior(tipoPeriodo, mes, trimestre, ano)
-    return vendas.filter((v) => vendaNoPeriodo(v, ant.tipoPeriodo, ant.mes, ant.trimestre, ant.ano))
-  }, [vendas, tipoPeriodo, mes, trimestre, ano])
+    return vendas.filter((v) => vendaNoPeriodo(v, ant.tipoPeriodo, ant.mes, ant.trimestre, ant.ano, limite))
+  }, [vendas, tipoPeriodo, mes, trimestre, ano, limite])
   const vendasSemana = useMemo(() => {
     const { inicio, fim } = semanaAtualRange()
     return vendas.filter((v) => {
@@ -133,6 +150,7 @@ function Dashboard({ usuario }) {
     return arr.map((val, i) => ({ mes: MESES[i], valor: val, pct: (val / max) * 100 }))
   }, [vendas, ano])
   // ===== Clientes a reativar (inativos há 30-90 dias) =====
+  // ===== ALTERADO: ignora clientes ARQUIVADOS =====
   const clientesParaReativar = useMemo(() => {
     const vendasPorCliente = {}
     for (const v of vendas) {
@@ -143,6 +161,7 @@ function Dashboard({ usuario }) {
     hoje.setHours(0, 0, 0, 0)
     const DIA = 86400000
     return clientes
+      .filter((c) => !c.arquivado)
       .map((c) => {
         const datas = (vendasPorCliente[c.id] || []).slice().sort()
         const ult = datas.length ? datas[datas.length - 1] : null
@@ -308,6 +327,7 @@ function Dashboard({ usuario }) {
       <div className="grafico-mensal">
         {vendasPorMes.map((item, i) => (
           <div className="grafico-coluna" key={i} title={`${item.mes}: ${fmtValor(item.valor)}`}>
+            <span className="grafico-valor">{item.valor > 0 ? fmtValor(item.valor) : ''}</span>
             <div className="grafico-barra" style={{ height: `${Math.max(item.pct, 2)}%` }}></div>
             <span className="grafico-mes">{item.mes.slice(0, 3)}</span>
           </div>

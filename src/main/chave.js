@@ -1,1 +1,1 @@
-export const CHAVE_GEMINI = process.env.CHAVE_GEMINI || process.env.GCP_API_KEY || ''
+export const CHAVE_GEMINI = import.meta.env.VITE_GCP_API_KEY || ''

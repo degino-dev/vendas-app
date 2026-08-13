@@ -2048,3 +2048,69 @@ html, body {
   align-items: center;
   justify-content: center;
 }
+
+.grafico-coluna {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+}
+
+.grafico-valor {
+  font-size: 10px;
+  color: #475569;
+  margin-bottom: 2px;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.top-filtro-ano {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.top-filtro-ano label {
+  font-size: 13px;
+  color: #475569;
+}
+.top-filtro-ano select {
+  padding: 4px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 13px;
+  background: #fff;
+}
+
+.btn-arquivar.ativo {
+  background: #fef3c7;
+  border-color: #f59e0b;
+}
+.linha-arquivada td {
+  opacity: 0.6;
+}
+.badge-arquivado {
+  margin-left: 6px;
+  font-size: 13px;
+}
+
+.dica-ranking {
+  border-left-color: #8b5cf6;
+}
+.dica-tag.dica-ranking {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
+.dica-sazonal { border-left-color: #14b8a6; }
+.dica-tag.dica-sazonal { background: #ccfbf1; color: #0f766e; }
+
+.modal-consulta { width: min(720px, 92vw); max-height: 85vh; display: flex; flex-direction: column; }
+.modal-consulta-topo { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.modal-fechar { font-size: 18px; font-weight: bold; }
+.modal-consulta-corpo { overflow-y: auto; padding-right: 4px; }
+.modal-gerando { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 40px 0; color: #64748b; }
+.modal-consulta .consultar-feedback { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.modal-consulta .feedback-rotulo { font-size: 13px; color: #64748b; }
+.modal-consulta .modal-acoes { margin-top: 16px; display: flex; justify-content: flex-end; }

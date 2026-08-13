@@ -140,8 +140,7 @@ export default function Login({ onLogin }) {
   return (
     <div className="login-wrap">
       <div className="login-card">
-        {/* ===== Logo da pasta public/ ===== */}
-        <img src="/logo.png" alt="Décio Camargo" className="login-logo" />
+        <img src="./logo.png" alt="Décio Camargo" className="login-logo" />
         <h2>Controle de Vendas</h2>
         <p className="login-sub">Faça login para continuar</p>
         <form onSubmit={entrar}>

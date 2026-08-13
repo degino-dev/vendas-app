@@ -1,6 +1,6 @@
 {
   "name": "vendas-app",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "App de controle de vendas para equipe comercial",
   "main": "./out/main/index.js",
   "author": "Décio Camargo",
