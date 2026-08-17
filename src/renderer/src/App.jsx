@@ -9,6 +9,8 @@ import PainelGerente from './components/PainelGerente'
 import GestaoVendedores from './components/GestaoVendedores'
 import Insights from './components/Insights'
 import Consultar from './components/Consultar'
+import Promocoes from './components/Promocoes'
+
 function App() {
   const [usuario, setUsuario] = useState(null)
   // ===== ALTERADO: aba padrão vira a Home =====
@@ -46,7 +48,9 @@ function App() {
         { id: 'vendas', label: 'Vendas' },
         { id: 'orcamentos', label: 'Orçamentos' },
         { id: 'consultar', label: '🔍 Consultar' },
-        { id: 'insights', label: '💡 Dicas' }
+        { id: 'insights', label: '💡 Dicas' },
+		{ id: 'promocoes', label: '📰 Promoções' },
+
       ]
     : [
         // ===== ALTERADO: Home é a primeira aba do vendedor =====
@@ -56,7 +60,9 @@ function App() {
         { id: 'orcamentos', label: 'Orçamentos' },
         { id: 'dashboard', label: '📊 Análise' },
         { id: 'consultar', label: '🔍 Consultar' },
-        { id: 'insights', label: '💡 Dicas' }
+        { id: 'insights', label: '💡 Dicas' },
+		{ id: 'promocoes', label: '📰 Promoções' },
+
       ]
   async function salvarCaminho(e) {
     e.preventDefault()
@@ -141,6 +147,7 @@ function App() {
         {aba === 'dashboard' && <Dashboard usuario={usuario} />}
         {aba === 'consultar' && <Consultar usuario={usuario} />}
         {aba === 'insights' && <Insights usuario={usuario} />}
+		{aba === 'promocoes' && <Promocoes />}
       </main>
     </div>
   )

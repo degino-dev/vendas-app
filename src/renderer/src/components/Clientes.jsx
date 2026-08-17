@@ -16,7 +16,7 @@ const ROTULOS_TIPO_HIST = {
   obs: '📝 Observação'
 }
 const formVazio = () => ({
-  codigo: '', nome: '', cnpj: '', email: '', whats: '', cidade: '', segmento: ''
+  codigo: '', nome: '', cnpj: '', email: '', whats: '', contato: '', cidade: '', segmento: ''
 })
 function Clientes({ usuario }) {
   const [clientes, setClientes] = useState([])
@@ -188,6 +188,8 @@ function Clientes({ usuario }) {
       cnpj: c.cnpj || '',
       email: c.email || '',
       whats: c.whats || '',
+      // ===== NOVO: campo contato =====
+      contato: c.contato || '',
       cidade: c.cidade || '',
       segmento: c.segmento || ''
     })
@@ -223,6 +225,8 @@ function Clientes({ usuario }) {
       cnpj: form.cnpj,
       email: form.email,
       whats: form.whats,
+      // ===== NOVO: campo contato =====
+      contato: form.contato,
       cidade: form.cidade,
       segmento: form.segmento
     }
@@ -382,6 +386,15 @@ function Clientes({ usuario }) {
                 value={form.whats}
                 onChange={(e) => setForm({ ...form, whats: e.target.value })}
                 placeholder="(00) 00000-0000"
+              />
+            </label>
+            {/* ===== NOVO: campo Contato ===== */}
+            <label>
+              Contato
+              <input
+                value={form.contato}
+                onChange={(e) => setForm({ ...form, contato: e.target.value })}
+                placeholder="Nome do contato/responsável (ex.: Maria - compras)"
               />
             </label>
             <label>

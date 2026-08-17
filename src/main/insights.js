@@ -475,6 +475,7 @@ export function gerarEstatisticasCliente(opcoes) {
       cnpj: cliente.cnpj || '',
       email: cliente.email || '',
       whats: cliente.whats || '',
+	  contato: cliente.contato || '',
       cidade: cliente.cidade || '',
       segmento: cliente.segmento || '',
       codigo: cliente.codigo,

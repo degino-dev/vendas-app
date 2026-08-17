@@ -135,6 +135,118 @@ handleUnico('notas:anos', (_e) => {
   )].sort()
   return { ok: true, anos }
 })
+
+// ===== NOVO: padrão de compra do cliente (notas fiscais, 3/6/9/12 meses) =====
+handleUnico('notas:padraoCliente', (_e, codigoCliente, meses) => {
+  const janela = [3, 6, 9, 12].includes(Number(meses)) ? Number(meses) : 6
+  const res = carregarNotas()
+  if (!res.ok) return res
+  const notas = res.dados.notas || []
+  const chave = String(codigoCliente).trim()
+
+  // 1) Gera os últimos N meses (YYYY-MM), do mais antigo ao mais recente
+  const mesesLista = []
+  const agora = new Date()
+  for (let i = janela - 1; i >= 0; i--) {
+    const d = new Date(agora.getFullYear(), agora.getMonth() - i, 1)
+    mesesLista.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'))
+  }
+
+  // 2) Agrupa produtos por mês (chave: código|descrição)
+  const porMes = {}
+  const infoProduto = {}
+  for (const nota of notas) {
+    const codNota = String((nota.cliente && nota.cliente.codigo) || '').trim()
+    if (codNota !== chave) continue
+    const dataNota = String(nota.data || nota.emissao || nota.dataEmissao || '')
+    const mesNota = dataNota.slice(0, 7)
+    if (!mesesLista.includes(mesNota)) continue
+    for (const p of nota.produtos || []) {
+      if (!p || !p.codigo) continue
+      const chaveProd = String(p.codigo).trim() + '|' + String(p.descricao || '').trim()
+      if (!porMes[mesNota]) porMes[mesNota] = {}
+      const item = porMes[mesNota][chaveProd] || { qtd: 0, valor: 0, aparicoes: 0 }
+      item.qtd += Number(p.quantidade || p.qtd) || 0
+      item.valor += Number(p.valor_total || p.valor || p.total) || 0
+      item.aparicoes++
+      porMes[mesNota][chaveProd] = item
+      if (!infoProduto[chaveProd]) {
+        infoProduto[chaveProd] = { codigo: p.codigo, descricao: p.descricao || '', unidade: p.unidade || '' }
+      }
+    }
+  }
+
+  // 3) Classifica cada produto
+  const primeirosMeses = mesesLista.slice(0, janela - 2)  // primeiros (N-2) meses
+  const ultimosMeses = mesesLista.slice(janela - 2)       // últimos 2 meses
+  const limiarRecorrente = Math.max(2, Math.round(janela / 2))
+  const resultado = []
+
+  for (const chaveProd of Object.keys(infoProduto)) {
+    const info = infoProduto[chaveProd]
+    const apareceuEm = mesesLista.filter((m) => porMes[m] && porMes[m][chaveProd])
+    const qtdMeses = apareceuEm.length
+    if (qtdMeses === 0) continue
+    const ultimoMes = apareceuEm[apareceuEm.length - 1]
+    let qtdTotal = 0, valorTotal = 0
+    apareceuEm.forEach((m) => {
+      qtdTotal += porMes[m][chaveProd].qtd
+      valorTotal += porMes[m][chaveProd].valor
+    })
+    const mediaMensal = qtdTotal / janela
+    const apareceuPrimeiros = apareceuEm.filter((m) => primeirosMeses.includes(m)).length
+    const apareceuUltimos = apareceuEm.filter((m) => ultimosMeses.includes(m)).length
+
+    // ⚠️ Parou: comprava antes e não aparece nos últimos 2 meses
+    const compravaPrimeiro = apareceuPrimeiros >= 2 || (apareceuPrimeiros >= 1 && qtdMeses >= 2)
+    if (compravaPrimeiro && apareceuUltimos === 0) {
+      resultado.push({
+        categoria: 'parou', ...info,
+        qtdMeses, qtdTotal, valorTotal, mediaMensal: Math.round(mediaMensal * 10) / 10,
+        ultimaCompra: ultimoMes,
+        mesesSemComprar: mesesLista.length - 1 - mesesLista.indexOf(ultimoMes)
+      })
+      continue
+    }
+    // 🆕 Começou: não aparecia antes e aparece nos últimos 2 meses
+    if (apareceuPrimeiros === 0 && apareceuUltimos > 0) {
+      resultado.push({
+        categoria: 'comecou', ...info,
+        qtdMeses, qtdTotal, valorTotal, mediaMensal: Math.round(mediaMensal * 10) / 10,
+        ultimaCompra: ultimoMes,
+        primeiraCompra: apareceuEm[0]
+      })
+      continue
+    }
+    // ✅ Sempre: aparece em metade+ da janela
+    if (qtdMeses >= limiarRecorrente) {
+      resultado.push({
+        categoria: 'sempre', ...info,
+        qtdMeses, qtdTotal, valorTotal, mediaMensal: Math.round(mediaMensal * 10) / 10,
+        ultimaCompra: ultimoMes
+      })
+      continue
+    }
+    // 💤 Esporádico: sem padrão claro
+    resultado.push({
+      categoria: 'esporadico', ...info,
+      qtdMeses, qtdTotal, valorTotal, ultimaCompra: ultimoMes
+    })
+  }
+
+  const ordenar = (lista) => lista.sort((a, b) => (b.valorTotal || 0) - (a.valorTotal || 0))
+  return {
+    ok: true,
+    janela,
+    meses: mesesLista,
+    sempre: ordenar(resultado.filter((r) => r.categoria === 'sempre')),
+    parou: ordenar(resultado.filter((r) => r.categoria === 'parou')),
+    comecou: ordenar(resultado.filter((r) => r.categoria === 'comecou')),
+    esporadico: ordenar(resultado.filter((r) => r.categoria === 'esporadico')).slice(0, 20)
+  }
+})
+
+
 // ===== CONSULTAR — Perguntas em linguagem natural =====
 function normalizarTexto(t) {
   return String(t || '')
@@ -599,6 +711,7 @@ handleUnico('clientes:criar', (_e, cliente) => {
     cnpj: cliente.cnpj || '',
     email: cliente.email || '',
     whats: cliente.whats || '',
+	contato: cliente.contato || '',
     cidade: capitalizarTexto(cliente.cidade),
     segmento: capitalizarTexto(cliente.segmento),
     envio: cliente.envio || '',
@@ -627,6 +740,7 @@ handleUnico('clientes:atualizar', (_e, cliente) => {
     cnpj: cliente.cnpj || '',
     email: cliente.email || '',
     whats: cliente.whats || '',
+	contato: cliente.contato || '',
     cidade: capitalizarTexto(cliente.cidade),
     segmento: capitalizarTexto(cliente.segmento),
     envio: cliente.envio || ''
@@ -1226,6 +1340,35 @@ handleUnico('historico:salvar', (_e, clienteId, item) => {
 handleUnico('app:reiniciarAtualizar', () => {
   autoUpdater.quitAndInstall()
   return { ok: true }
+})
+
+// ===== CORRIGIDO: busca a capa da revista e baixa como data URL =====
+handleUnico('promocoes:capa', async (_e, url) => {
+  const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36'
+  try {
+    // 1) Baixa o HTML da página e extrai a og:image (em qualquer ordem de atributos)
+    const res = await fetch(String(url || ''), { headers: { 'User-Agent': UA } })
+    const html = await res.text()
+    const m = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)
+      || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i)
+    if (!m || !m[1]) return { ok: false, erro: 'og:image não encontrado' }
+
+    // 2) Resolve URL relativa contra a página (ex.: "/files/..." -> "https://heyzine.com/files/...")
+    let capa = m[1]
+    if (capa.startsWith('//')) capa = 'https:' + capa
+    else if (capa.startsWith('/')) capa = new URL(capa, String(url)).href
+
+    // 3) Baixa a imagem (com Referer para não ser bloqueada) e converte para data URL
+    const imgRes = await fetch(capa, {
+      headers: { 'User-Agent': UA, 'Referer': String(url), 'Accept': 'image/*' }
+    })
+    if (!imgRes.ok) return { ok: false, erro: 'Falha ao baixar a imagem (' + imgRes.status + ')' }
+    const buf = Buffer.from(await imgRes.arrayBuffer())
+    const tipo = (imgRes.headers.get('content-type') || 'image/jpeg').split(';')[0]
+    return { ok: true, capa: `data:${tipo};base64,${buf.toString('base64')}` }
+  } catch (e) {
+    return { ok: false, erro: (e && e.message) || 'Falha ao buscar a capa' }
+  }
 })
 
 
