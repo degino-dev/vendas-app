@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld('api', {
   consultarIA: (pergunta) => ipcRenderer.invoke('ia:consultar', pergunta),
   avaliarIA: (dados) => ipcRenderer.invoke('ia:avaliar', dados),
   carteiraIA: () => ipcRenderer.invoke('ia:carteira'),
+  comprasNotas: (clienteId) => ipcRenderer.invoke('clientes:comprasNotas', clienteId),
   onUpdateBaixado: (cb) => ipcRenderer.on('update:baixado', () => cb()),
   reiniciarParaAtualizar: () => ipcRenderer.invoke('app:reiniciarAtualizar'),
 })

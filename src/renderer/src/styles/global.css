@@ -2114,3 +2114,120 @@ html, body {
 .modal-consulta .consultar-feedback { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
 .modal-consulta .feedback-rotulo { font-size: 13px; color: #64748b; }
 .modal-consulta .modal-acoes { margin-top: 16px; display: flex; justify-content: flex-end; }
+
+.secao-colapsavel {
+  margin: 14px 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+.secao-cabecalho {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: #f8fafc;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  color: #1e293b;
+  text-align: left;
+}
+.secao-cabecalho:hover { background: #f1f5f9; }
+.secao-seta { font-size: 14px; color: #64748b; }
+.secao-titulo { flex: 1; }
+.secao-contador {
+  background: #e2e8f0;
+  color: #475569;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.secao-conteudo { padding: 16px; }
+.badge-total { background: #eef2ff; color: #4338ca; }
+
+.ia-tabela { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ia-tabela th, .ia-tabela td { border: 1px solid #e2e8f0; padding: 8px 10px; text-align: left; }
+.ia-tabela th { background: #f1f5f9; font-weight: 600; }
+.ia-tabela tr:nth-child(even) { background: #f8fafc; }
+
+.chat-historico {
+  max-height: 55vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-right: 4px;
+}
+.chat-bloco { display: flex; flex-direction: column; gap: 6px; }
+.chat-pergunta {
+  background: #eef2ff;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+.chat-resposta { font-size: 13.5px; line-height: 1.55; }
+.chat-gerando { color: #64748b; display: flex; align-items: center; gap: 8px; }
+.chat-input { display: flex; gap: 8px; margin-top: 14px; }
+.chat-input input {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 13.5px;
+}
+
+.btn-microfone {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+  font-size: 18px;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+.btn-microfone:hover {
+  border-color: #6366f1;
+  background: #eef2ff;
+}
+.btn-microfone.gravando {
+  background: #fee2e2;
+  border-color: #ef4444;
+  color: #ef4444;
+  animation: pulsar-mic 1s infinite;
+}
+@keyframes pulsar-mic {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+}
+
+.meta-toggle {
+  display: inline-flex;
+  background: #e2e8f0;
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
+}
+.meta-toggle-btn {
+  border: none;
+  background: transparent;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.meta-toggle-btn.ativo {
+  background: #2563eb;
+  color: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}

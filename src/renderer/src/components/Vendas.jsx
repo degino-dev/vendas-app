@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { confirmar } from '../utils/confirmar'
 import { fmtValor, fmtData, MESES_NOME, dataLocalISO, mascaraMoeda, moedaParaMascara, parseMoeda } from '../utils/format'
 import { calcularMeta } from '../utils/financeiro'
-
 const formVazio = () => ({
   clienteId: '',
   buscaCliente: '',
@@ -15,7 +14,6 @@ const formVazio = () => ({
   data: dataLocalISO(),
   observacao: ''
 })
-
 function Vendas({ usuario }) {
   const hoje = new Date()
   const anoAtual = hoje.getFullYear()
@@ -90,8 +88,12 @@ function Vendas({ usuario }) {
     }
     return lista
   }, [vendas, filtroAno, filtroMes, filtroVendedor])
+  // ===== ALTERADO: recém-cadastradas sempre no topo (criadoEm) =====
   const vendasOrdenadas = useMemo(() => {
     return [...vendasFiltradas].sort((a, b) => {
+      const ca = Number(a.criadoEm) || 0
+      const cb = Number(b.criadoEm) || 0
+      if (ca !== cb) return cb - ca
       const cmp = (b.data || '').localeCompare(a.data || '')
       if (cmp !== 0) return cmp
       return String(b.id || '').localeCompare(String(a.id || ''))
@@ -164,11 +166,15 @@ function Vendas({ usuario }) {
     if (editando) {
       res = await window.api.atualizarVenda({ ...editando, ...payload })
     } else {
-      res = await window.api.criarVenda({ ...payload, vendedorId: usuario.id })
+      // ===== ALTERADO: criadoEm = momento do cadastro =====
+      res = await window.api.criarVenda({ ...payload, vendedorId: usuario.id, criadoEm: Date.now() })
     }
     if (res.ok) {
       setVendas((prev) =>
-        editando ? prev.map((v) => (v.id === res.venda.id ? res.venda : v)) : [res.venda, ...prev]
+        editando
+          ? prev.map((v) => (v.id === res.venda.id ? res.venda : v))
+          // ===== ALTERADO: nova venda sempre no topo =====
+          : [{ ...res.venda, criadoEm: Date.now() }, ...prev]
       )
       setMostrarSugestoes(false)
       cancelarEdicao()

@@ -1,6 +1,6 @@
 {
   "name": "vendas-app",
-  "version": "0.5.0",
+  "version": "1.0.1",
   "description": "App de controle de vendas para equipe comercial",
   "main": "./out/main/index.js",
   "author": "Décio Camargo",
@@ -16,7 +16,8 @@
     "dotenv": "^17.4.2",
     "electron-updater": "^6.8.9",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.2",
@@ -46,10 +47,12 @@
       ]
     },
     "nsis": {
-      "oneClick": true,
+      "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": false,
-      "createDesktopShortcut": true
+      "createDesktopShortcut": true,
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
     },
     "publish": [
       {

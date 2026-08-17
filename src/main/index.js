@@ -22,6 +22,9 @@ import { CHAVE_GEMINI } from './chave.js'
 import { registrarConsulta, registrarAvaliacao, carregarExemplos, carregarConsultasRecentes } from './memoriaIA'
 import { buscarFichasPorTermos } from './catalogoProdutos'
 import 'dotenv/config'
+import { configurarAutoUpdate } from './auto-update'
+
+
 // ===== DECLARAÇÕES (TEM QUE VIR ANTES DE QUALQUER handleUnico) =====
 const canaisRegistrados = new Set()
 function handleUnico(canal, fn) {
@@ -149,10 +152,17 @@ const STOPWORDS = new Set([
   'produtos', 'cliente', 'clientes', 'nota', 'notas', 'comprar', 'precisam'
 ])
 function extrairTermos(pergunta) {
-  return normalizarTexto(pergunta)
+  const base = normalizarTexto(pergunta)
     .split(/[^a-z0-9]+/)
     .filter((p) => p.length >= 4 && !STOPWORDS.has(p))
     .map((p) => (p.endsWith('s') ? p.slice(0, -1) : p))
+  const termos = []
+  for (const p of base) {
+    termos.push(p)
+    // variante sem a última vogal: "roxo"→"rox" casa com "ROXA", "vermelho"→"vermelh" casa com "VERMELHA"
+    if (/[aeiou]$/.test(p)) termos.push(p.slice(0, -1))
+  }
+  return termos
 }
 function buscarProdutosPorTermos(notas, termos, codigosPermitidos) {
   const mapa = {}
@@ -267,22 +277,41 @@ async function responderComGemini(prompt) {
   }
   return { ok: false, erro: ultimoErro }
 }
-handleUnico('ia:consultar', async (_e, pergunta) => {
+handleUnico('ia:consultar', async (_e, payload) => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
-  const perguntaTexto = String(pergunta || '').trim()
+  // ===== ALTERADO: aceita objeto { pergunta, historico } (mantém compatibilidade com texto puro) =====
+  const perguntaTexto = typeof payload === 'string'
+    ? String(payload).trim()
+    : String((payload && payload.pergunta) || '').trim()
   if (!perguntaTexto) return { ok: false, erro: 'Digite uma pergunta.' }
+  const historico = Array.isArray(payload && payload.historico) ? payload.historico : []
+
   const notasRes = carregarNotas()
   const notas = notasRes.ok ? (notasRes.dados.notas || []) : []
-  const termos = extrairTermos(perguntaTexto)
+  // ===== ALTERADO: follow-up sem termos próprios herda os termos da pergunta original =====
+  let termos = extrairTermos(perguntaTexto)
+  if (termos.length === 0 && historico.length > 0) {
+    termos = extrairTermos(historico[0].pergunta)
+  }
+
   const dados = dadosParaPerfil()
-  // ===== NOVO: filtra clientes ARQUIVADOS (a IA não enxerga) =====
+  // ===== filtra clientes ARQUIVADOS (a IA não enxerga) =====
   const clientesAtivos = (dados.clientes || []).filter((c) => !c.arquivado)
   const codigosPermitidos = new Set(
     clientesAtivos.map((c) => String(c.codigo).trim()).filter(Boolean)
   )
-  const produtosEncontrados = buscarProdutosPorTermos(notas, termos, codigosPermitidos).slice(0, 60)
-    // ===== DETECTA se a pergunta menciona um CLIENTE específico =====
-  // Tenta achar o cliente pelo nome mencionado na pergunta
+  const produtosEncontrados = buscarProdutosPorTermos(notas, termos, codigosPermitidos).slice(0, 400)
+   // ===== NOVO: usa o NOME da carteira de clientes (cadastro) em vez do nome das notas =====
+  const nomePorCodigo = {}
+  for (const c of clientesAtivos) {
+    nomePorCodigo[String(c.codigo).trim()] = c.nome
+  }
+  for (const p of produtosEncontrados) {
+    const nomeCarteira = nomePorCodigo[p.clienteCodigo]
+    if (nomeCarteira) p.clienteNome = nomeCarteira
+  }
+
+  // ===== DETECTA se a pergunta menciona um CLIENTE específico =====
   const perguntaNorm = normalizarTexto(perguntaTexto)
   let clienteAlvo = null
   for (const c of clientesAtivos) {
@@ -297,6 +326,7 @@ handleUnico('ia:consultar', async (_e, pergunta) => {
   if (clienteAlvo) {
     produtosDoCliente = buscarProdutosPorCliente(notas, clienteAlvo.codigo, 6).slice(0, 20)
   }
+
   const fichasRelevantes = buscarFichasPorTermos(termos, 5)
   const orcamentosAguardando = (dados.orcamentos || [])
     .filter((o) => o.status === 'aguardando')
@@ -313,18 +343,19 @@ handleUnico('ia:consultar', async (_e, pergunta) => {
       }
     })
   const exemplos = carregarExemplos(sessao.id, 5)
+
   const contexto = {
     pergunta: perguntaTexto,
     termosBusca: termos,
     produtosEncontrados,
-    // ===== NOVO: cliente detectado + produtos dele nos últimos 6 meses =====
+    // ===== cliente detectado + produtos dele nos últimos 6 meses =====
     clienteDetectado: clienteAlvo ? { codigo: clienteAlvo.codigo, nome: clienteAlvo.nome } : null,
     produtosDoCliente: clienteAlvo ? produtosDoCliente : [],
     orcamentosAguardando,
     totalClientes: clientesAtivos.length,
     totalVendas: dados.vendas.length
   }
-  // ===== MUDANÇA: const → let (permite os prompt += abaixo) =====
+
   let prompt =
     'Você é um consultor de vendas sênior, com 20 anos de experiência, que responde perguntas de vendedores.\n' +
     'Pergunta do vendedor:\n' + perguntaTexto + '\n\n' +
@@ -344,17 +375,52 @@ handleUnico('ia:consultar', async (_e, pergunta) => {
     '- Use as FICHAS TÉCNICAS fornecidas para explicar a RELAÇÃO TÉCNICA entre os produtos (ex.: quem compra tubo de coleta também precisa de agulha múltipla).\n' +
     '- NUNCA invente produtos que não existam nas notas ou no catálogo. Só sugira produtos que apareçam nos dados ou nas fichas técnicas fornecidas.\n' +
     '- Quando sugerir um produto complementar, diga o CÓDIGO e o NOME exatos do produto, e explique POR QUE ele é complementar (uso conjunto, aplicação clínica).\n' +
-    '- Se houver fichas técnicas, use o conhecimento biomédico (aplicações clínicas, compatibilidades) para dar credibilidade técnica à sugestão.\n'
+    '- Se houver fichas técnicas, use o conhecimento biomédico (aplicações clínicas, compatibilidades) para dar credibilidade técnica à sugestão.\n' +
+    // ===== INTELIGÊNCIA DE ROTINAS LABORATORIAIS (cross-selling por gap) =====
+    'ROTINAS LABORATORIAIS PADRÃO (use para identificar oportunidades de venda):\n' +
+    '1. COLETA DE SANGUE A VÁCUO (punção venosa): tubos de coleta a vácuo (roxo EDTA, vermelho com/sem gel, azul citrato, verde heparina, cinza fluoreto, amarelo), agulha para sistema a vácuo, adaptador (porta-tubo), garrote/torniquete, algodão, álcool 70%, luva de procedimento, blood stop (curativo compressivo), esparadrapo/micropore, etiquetas de identificação, descarpack (descarte perfurocortante).\n' +
+    '2. COLETA CAPILAR (punção digital): lanceta, tubo capilar, microtubo com EDTA, luva, algodão, álcool.\n' +
+    '3. COLETA DE URINA: frasco coletor universal, copo descartável, saco coletor pediátrico, tubo de urina com conservante, luva, etiqueta.\n' +
+    '4. COLETA DE FEZES: coletor de fezes com espátula, saco plástico, luva, etiqueta.\n' +
+    '5. EXAME BIOQUÍMICO (soro): tubo vermelho com gel, agulha, adaptador, algodão, luva.\n' +
+    '6. HEMATOLOGIA (hemograma): tubo roxo EDTA K3, agulha, adaptador, lâmina de vidro, lâminula, corante hematológico, luva.\n' +
+    '7. COAGULAÇÃO: tubo azul com citrato de sódio, agulha, adaptador, luva.\n' +
+    '8. GLICEMIA: tubo cinza com fluoreto, agulha, adaptador, algodão, luva.\n' +
+    '9. SOROLOGIA (testes rápidos/imunoensaios): tubo amarelo ou vermelho com gel, cassete de teste rápido, diluente, conta-gotas, lanceta, luva, cronômetro.\n' +
+    '10. GASOMETRIA: seringa de gasometria heparinizada, agulha, luva, algodão.\n' +
+    '11. MICROBIOLOGIA: swab estéril, placa de Petri, tubo de transporte, luva, álcool.\n' +
+    '12. LABORATÓRIO GERAL: centrífuga, ponteiras, pipetas, jaleco, EPI, hipoclorito, desinfetante.\n' +
+    '\n' +
+    'REGRAS DE ANÁLISE DE GAP (cross-selling por rotina):\n' +
+    '- Para CADA cliente citado, identifique qual(is) rotina(s) ele executa com base nos produtos que compra nas notas.\n' +
+    '- Liste os itens da rotina que ele JÁ compra com você e os itens que ele NÃO compra (oportunidade de venda).\n' +
+    '- Exemplo: se o cliente compra tubo roxo e azul (coleta a vácuo) mas NÃO compra agulha, adaptador, blood stop, algodão ou luva, aponte esses itens como oportunidades.\n' +
+    '- Ordene as oportunidades por potencial: itens de uso recorrente e de maior volume primeiro.\n' +
+    '- Ao final, sugira uma OFERTA CASADA objetiva (ex.: "oferte agulha + adaptador + blood stop junto com a reposição de tubos").\n' +
+    '- NUNCA invente que o cliente comprou um produto que não está nas notas; apenas aponte os itens da rotina que ele NÃO compra com você como oportunidade.\n'
+
+  // ===== NOVO: histórico da conversa (perguntas de acompanhamento) =====
+  if (historico.length > 0) {
+    prompt += '\nHISTÓRICO DA CONVERSA ATUAL (o vendedor está fazendo uma pergunta de acompanhamento sobre a resposta anterior):\n' +
+      JSON.stringify(historico, null, 2) + '\n\n' +
+      'REGRAS PARA PERGUNTAS DE ACOMPANHAMENTO:\n' +
+      '- Responda considerando o contexto da conversa acima (perguntas e respostas anteriores).\n' +
+      '- NÃO repita a lista completa de clientes já mostrada na resposta anterior; foque apenas no que foi perguntado agora.\n' +
+      '- Continue usando APENAS os dados disponíveis; não invente clientes, produtos ou valores.\n'
+  }
+
   // ===== CATÁLOGO: injeta fichas técnicas no prompt =====
   if (fichasRelevantes.length > 0) {
     prompt += '\nFICHAS TÉCNICAS DOS PRODUTOS RELACIONADOS (use para explicar o produto com conhecimento técnico):\n' +
       JSON.stringify(fichasRelevantes.map((p) => p.ficha), null, 2) + '\n'
   }
+
   // ===== MEMÓRIA: injeta exemplos de respostas boas (few-shot) =====
   if (exemplos.length > 0) {
     prompt += '\nExemplos de respostas que este vendedor avaliou como BOAS (use o MESMO estilo, formato e nível de detalhe):\n' +
       JSON.stringify(exemplos, null, 2) + '\n'
   }
+
   const res = await responderComGemini(prompt)
   if (res.ok) {
     registrarConsulta(sessao.id, perguntaTexto, res.texto)
@@ -713,15 +779,36 @@ handleUnico('orcamentos:aprovar', (_e, id, info) => {
   if (!pedidoInsumos && !pedidoEquipamento) {
     return { ok: false, erro: 'Informe ao menos o Ped. Insumos ou o Ped. Equip. para aprovar o orçamento.' }
   }
+  // ===== NOVO: valor aprovado (se informado, ajusta a venda para o valor real) =====
+  const valorAprovado = info && info.valorAprovado != null ? Number(info.valorAprovado) : null
+  let valorInsumosVenda = Number(orc.valorInsumos) || 0
+  let valorEquipamentoVenda = Number(orc.valorEquipamento) || 0
+  if (valorAprovado && valorAprovado > 0) {
+    const totalOrcado = valorInsumosVenda + valorEquipamentoVenda
+    if (totalOrcado > 0) {
+      // mantém a proporção insumos/equipamento do orçamento, ajustada ao valor aprovado
+      const fator = valorAprovado / totalOrcado
+      valorInsumosVenda = Math.round(valorInsumosVenda * fator)
+      valorEquipamentoVenda = Math.round(valorEquipamentoVenda * fator)
+      // corrige arredondamento para a soma bater exatamente no valor aprovado
+      const dif = valorAprovado - (valorInsumosVenda + valorEquipamentoVenda)
+      if (valorEquipamentoVenda >= valorInsumosVenda) valorEquipamentoVenda += dif
+      else valorInsumosVenda += dif
+    } else if (pedidoInsumos) {
+      valorInsumosVenda = valorAprovado
+    } else {
+      valorEquipamentoVenda = valorAprovado
+    }
+  }
   dados.vendas.push({
     id: randomUUID(),
     clienteId: orc.clienteId || '',
     vendedorId: sessao.id,
     envio: orc.envio || '',
     pedidoInsumos: pedidoInsumos,
-    valorInsumos: Number(orc.valorInsumos) || 0,
+    valorInsumos: valorInsumosVenda,
     pedidoEquipamento: pedidoEquipamento,
-    valorEquipamento: Number(orc.valorEquipamento) || 0,
+    valorEquipamento: valorEquipamentoVenda,
     frete: orc.frete || 0,
     data: orc.data || new Date().toISOString().slice(0, 10),
     observacao: orc.observacao || ''
@@ -729,6 +816,8 @@ handleUnico('orcamentos:aprovar', (_e, id, info) => {
   orc.status = 'aprovado'
   orc.pedidoFinalInsumos = pedidoInsumos
   orc.pedidoFinalEquipamento = pedidoEquipamento
+  // ===== NOVO: guarda o valor aprovado no orçamento (exibição Orçado vs Aprovado) =====
+  orc.valorAprovado = valorAprovado
   salvarDadosVendedor(sessao.id, dados)
   return { ok: true }
 })
@@ -775,6 +864,33 @@ handleUnico('insights:marcar', (_e, { acao, chave }) => {
   salvarEstadoInsights(sessao.id, novo)
   return { ok: true, estado: novo }
 })
+
+// ===== NOVO: itens de notas fiscais do cliente (mesma base da consulta IA) =====
+handleUnico('clientes:comprasNotas', (_e, clienteId) => {
+  if (!sessao) return { ok: false, erro: 'Não autenticado' }
+  const dados = dadosDoVendedor()
+  const cli = (dados.clientes || []).find((c) => c.id === clienteId)
+  if (!cli) return { ok: false, erro: 'Cliente não encontrado' }
+  const codigo = String(cli.codigo || '').trim()
+  if (!codigo) return { ok: true, itens: [] }
+  const itens = []
+  // 'notas' é a mesma variável usada no ia:consultar — adapte o nome se for diferente
+  for (const nota of notas || []) {
+    const codNota = String((nota.cliente && nota.cliente.codigo) || '').trim()
+    if (!codNota || codNota !== codigo) continue
+    for (const prod of nota.itens || nota.produtos || []) {
+      itens.push({
+        descricao: prod.descricao || prod.nome || prod.produto || '',
+        quantidade: Number(prod.quantidade || prod.qtd || 0),
+        valor: Number(prod.valor || prod.total || 0),
+        data: nota.data || nota.emissao || ''
+      })
+    }
+  }
+  return { ok: true, itens }
+})
+
+
 // ===== INTELIGÊNCIA ARTIFICIAL — Gemini API =====
 async function listarModelosDisponiveis() {
   try {
@@ -1111,6 +1227,8 @@ handleUnico('app:reiniciarAtualizar', () => {
   autoUpdater.quitAndInstall()
   return { ok: true }
 })
+
+
 // --- Janela ---
 function createWindow() {
   const win = new BrowserWindow({
@@ -1145,38 +1263,16 @@ function createWindow() {
     win.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
-// ===== Auto-update (electron-updater) =====
-function configurarAutoUpdate(win) {
-  // Só atualiza em produção (app empacotado), nunca no "npm run dev"
-  if (!app.isPackaged) return
-  autoUpdater.autoDownload = false
-  // ===== NOVO: aviso de versão nova ao abrir o app =====
-  autoUpdater.on('update-available', async (info) => {
-    const { response } = await dialog.showMessageBox({
-      type: 'info',
-      title: 'Atualização disponível',
-      message: `Nova versão ${info.version} encontrada!`,
-      detail: 'Deseja baixar e instalar agora?',
-      buttons: ['Baixar e instalar', 'Depois'],
-      defaultId: 0,
-      cancelId: 1
-    })
-    if (response === 0) {
-      autoUpdater.downloadUpdate()
-    }
-  })
-  autoUpdater.autoInstallOnAppQuit = true
-  // Avisa o front quando a atualização foi baixada
-  autoUpdater.on('update-downloaded', () => {
-    win.webContents.send('update:baixado')
-  })
-  autoUpdater.on('error', (err) => {
-    console.error('Erro no auto-update:', err)
-  })
-  // Verifica atualização ao iniciar
-  autoUpdater.checkForUpdatesAndNotify()
-}
+
 app.whenReady().then(() => {
+	  // ===== NOVO: permite o uso do microfone (reconhecimento de voz no Consultar) =====
+  const { session } = require('electron')
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+    if (permission === 'media' || permission === 'audioCapture') {
+      return callback(true)
+    }
+    return callback(false)
+  })
   createWindow()
   configurarAutoUpdate(mainWindow)
   try {
@@ -1194,6 +1290,7 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
+
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { fmtMoeda, fmtCnpj, fmtFone, fmtDataHora, fmtData } from '../utils/format'
+// ===== NOVO: componente de Rotina do Laboratório =====
+import RotinaLaboratorio from './RotinaLaboratorio'
 const ROTULOS_TIPO = {
   ligacao: '📞 Liguei',
   promocao: '🎁 Promoção',
@@ -34,10 +36,13 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
   const [erroProdutos, setErroProdutos] = useState('')
   // ===== NOVO: filtro de ano das notas (total / 2025 / 2026) =====
   const [anoFiltro, setAnoFiltro] = useState('total')
-const [anosDisponiveis, setAnosDisponiveis] = useState([])
+  const [anosDisponiveis, setAnosDisponiveis] = useState([])
   // Orçamentos aprovados e recusados
   const [orcamentos, setOrcamentos] = useState([])
   const [carregandoOrc, setCarregandoOrc] = useState(false)
+  // ===== NOVO: Rotina do Laboratório (dados do cliente + notas para o alerta) =====
+  const [rotinaCliente, setRotinaCliente] = useState(null)
+  const [comprasNotas, setComprasNotas] = useState([])
   useEffect(() => {
     let ativo = true
     setCarregando(true)
@@ -62,6 +67,26 @@ const [anosDisponiveis, setAnosDisponiveis] = useState([])
       })
     return () => { ativo = false }
   }, [clienteId])
+  // ===== NOVO: prepara o cliente para a rotina quando os dados carregam =====
+  useEffect(() => {
+    if (dados && dados.ok && dados.cliente) {
+      setRotinaCliente(dados.cliente)
+    }
+  }, [dados])
+  // ===== NOVO: carrega as notas fiscais do cliente para o alerta de consumo =====
+  useEffect(() => {
+    if (!rotinaCliente || !rotinaCliente.id) {
+      setComprasNotas([])
+      return
+    }
+    if (!window.api || typeof window.api.comprasNotas !== 'function') {
+      setComprasNotas([])
+      return
+    }
+    window.api.comprasNotas(rotinaCliente.id)
+      .then((res) => setComprasNotas(res && res.ok ? res.itens : []))
+      .catch(() => setComprasNotas([]))
+  }, [rotinaCliente])
   // Carrega o histórico automaticamente (sempre visível)
   useEffect(() => {
     if (!window.api || typeof window.api.historicoCliente !== 'function') {
@@ -99,19 +124,16 @@ const [anosDisponiveis, setAnosDisponiveis] = useState([])
       })
       .finally(() => setCarregandoProdutos(false))
   }, [dados, anoFiltro])
-  
   // Carrega os anos disponíveis nas notas (seletor dinâmico)
-useEffect(() => {
-  if (!window.api || typeof window.api.notasAnos !== 'function') return
-  window.api
-    .notasAnos()
-    .then((res) => {
-      if (res && res.ok) setAnosDisponiveis(res.anos || [])
-    })
-    .catch((err) => console.error('Erro ao carregar anos das notas:', err))
-}, [])
-
-
+  useEffect(() => {
+    if (!window.api || typeof window.api.notasAnos !== 'function') return
+    window.api
+      .notasAnos()
+      .then((res) => {
+        if (res && res.ok) setAnosDisponiveis(res.anos || [])
+      })
+      .catch((err) => console.error('Erro ao carregar anos das notas:', err))
+  }, [])
   // Carrega orçamentos aprovados e recusados deste cliente
   useEffect(() => {
     if (!window.api || typeof window.api.listarOrcamentos !== 'function') return
@@ -329,11 +351,11 @@ useEffect(() => {
         <div className="top-filtro-ano">
           <label>Período das notas:</label>
           <select value={anoFiltro} onChange={(e) => setAnoFiltro(e.target.value)}>
-  <option value="total">Total (todos os anos)</option>
-  {anosDisponiveis.map((ano) => (
-    <option key={ano} value={ano}>{ano}</option>
-  ))}
-</select>
+            <option value="total">Total (todos os anos)</option>
+            {anosDisponiveis.map((ano) => (
+              <option key={ano} value={ano}>{ano}</option>
+            ))}
+          </select>
         </div>
       </div>
       {/* Top produtos (notas.json) */}
@@ -411,6 +433,25 @@ useEffect(() => {
             ))}
           </ul>
         )}
+      </div>
+      {/* ===== NOVO: Rotina do Laboratório (movida para o FINAL, após o Histórico) ===== */}
+      <div className="cliente-secao">
+        <RotinaLaboratorio
+          inline
+          cliente={rotinaCliente || c}
+          comprasNotas={comprasNotas}
+          onSalvar={async ({ rotinas, equipamentos }) => {
+            const atualizado = { ...(rotinaCliente || c), rotinas, equipamentos }
+            const res = await window.api.atualizarCliente(atualizado)
+            if (res && res.ok) {
+              setDados((prev) => (prev && prev.ok ? { ...prev, cliente: atualizado } : prev))
+              setRotinaCliente(atualizado)
+              mostrarAviso('🧪 Rotina do laboratório salva!')
+            } else {
+              mostrarAviso('⚠️ Erro ao salvar a rotina.')
+            }
+          }}
+        />
       </div>
     </div>
   )

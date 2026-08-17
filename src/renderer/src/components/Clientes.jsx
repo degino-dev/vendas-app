@@ -129,12 +129,19 @@ function Clientes({ usuario }) {
     for (const c of clientesComIndicadores) cont[c.abc]++
     return cont
   }, [clientesComIndicadores])
+  // ===== ALTERADO: busca por NOME ou por ID (código) =====
   const clientesFiltrados = useMemo(() => {
     let lista = clientesComIndicadores
     if (filtroStatus) lista = lista.filter((c) => c.status === filtroStatus)
     if (filtroAbc) lista = lista.filter((c) => c.abc === filtroAbc)
     const b = buscaNome.trim().toLowerCase()
-    if (b) lista = lista.filter((c) => String(c.nome || '').toLowerCase().includes(b))
+    if (b) {
+      lista = lista.filter((c) => {
+        const porNome = String(c.nome || '').toLowerCase().includes(b)
+        const porId = String(c.codigo) === b || String(c.codigo).startsWith(b)
+        return porNome || porId
+      })
+    }
     return lista
   }, [clientesComIndicadores, filtroStatus, filtroAbc, buscaNome])
   async function consultarCnpj(cnpj) {
@@ -322,7 +329,7 @@ function Clientes({ usuario }) {
           type="text"
           value={buscaNome}
           onChange={(e) => setBuscaNome(e.target.value)}
-          placeholder="🔍 Buscar cliente pelo nome..."
+          placeholder="🔍 Buscar cliente pelo nome ou ID..."
         />
         {buscaNome && (
           <button className="btn-limpar" onClick={() => setBuscaNome('')}>✕</button>

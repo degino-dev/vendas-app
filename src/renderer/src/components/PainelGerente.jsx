@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { fmtValor, fmtPct, fmtData, MESES_NOME as MESES, parseData, semanaAtualRange } from '../utils/format'
 import { valorFreteDe, valorPedido, valorOrcamento } from '../utils/financeiro'
-
 // Verifica se o prazo de validade venceu ou está perto (<= 3 dias)
 function situacaoValidade(prazo) {
   if (!prazo) return 'sem'
@@ -14,13 +13,31 @@ function situacaoValidade(prazo) {
   if (diff <= 3) return 'proximo'
   return 'ok'
 }
-
 const STATUS_META = {
   aguardando: { label: '⏳ Aguardando', classe: 'status-aguardando' },
   aprovado: { label: '✅ Aprovado', classe: 'status-aprovado' },
   recusado: { label: '❌ Recusado', classe: 'status-recusado' }
 }
-
+// ===== NOVO: valor efetivo do orçamento (usa o valor aprovado quando existir) =====
+function valorEfetivo(o) {
+  if (o.status === 'aprovado' && o.valorAprovado != null && Number(o.valorAprovado) > 0) {
+    return Number(o.valorAprovado)
+  }
+  return valorOrcamento(o)
+}
+// ===== NOVO: seção colapsável (acordeão) =====
+function SecaoColapsavel({ titulo, aberto, aoAlternar, contador, children }) {
+  return (
+    <div className="secao-colapsavel">
+      <button type="button" className="secao-cabecalho" onClick={aoAlternar}>
+        <span className="secao-seta">{aberto ? '▾' : '▸'}</span>
+        <span className="secao-titulo">{titulo}</span>
+        {contador != null && <span className="secao-contador">{contador}</span>}
+      </button>
+      {aberto && <div className="secao-conteudo">{children}</div>}
+    </div>
+  )
+}
 function PainelGerente() {
   const [vendedores, setVendedores] = useState([])
   const [vendas, setVendas] = useState([])
@@ -32,6 +49,11 @@ function PainelGerente() {
   const [carregando, setCarregando] = useState(false)
   const [ultimaAtualizacao, setUltimaAtualizacao] = useState(null)
   const [autoRefresh, setAutoRefresh] = useState(true)
+  // ===== NOVO: estados de colapso das seções (começam ocultas) =====
+  const [abertoOrcamentos, setAbertoOrcamentos] = useState(false)
+  const [abertoClientes, setAbertoClientes] = useState(false)
+  const [abertoMotivos, setAbertoMotivos] = useState(false)
+  const [abertoTodosOrcamentos, setAbertoTodosOrcamentos] = useState(false)
   // ===== NOVO: feedback de erro no carregamento =====
   const [erroCarregamento, setErroCarregamento] = useState('')
   // ===== NOVO: toast de sucesso =====
@@ -59,7 +81,6 @@ function PainelGerente() {
       setUltimaAtualizacao(new Date())
     } catch (err) {
       console.error('Erro ao atualizar dados do gerente:', err)
-      // ===== NOVO: avisa o gerente que falhou =====
       setErroCarregamento('Falha ao atualizar os dados. Verifique a conexão e tente novamente.')
     } finally {
       setCarregando(false)
@@ -101,7 +122,6 @@ function PainelGerente() {
           const data = parseData(x.data)
           return data && data >= inicio && data <= fim
         })
-        // ===== CORREÇÃO: usa valorPedido (pedido − frete) =====
         const totalSemana = vendasSemana.reduce((s, x) => s + valorPedido(x), 0)
         const vendasMes = vendasDoVendedor.filter((x) => noMes(x.data, ano, mes))
         const totalMes = vendasMes.reduce((s, x) => s + valorPedido(x), 0)
@@ -113,7 +133,8 @@ function PainelGerente() {
         const orcamentosDoVendedor = listaOrcamentos.filter((o) => o.vendedorId === v.id)
         const orcamentosMes = orcamentosDoVendedor.filter((o) => noMes(o.data, ano, mes))
         const qtdOrcamentosMes = orcamentosMes.length
-        const totalOrcamentosMes = orcamentosMes.reduce((s, o) => s + valorOrcamento(o), 0)
+        // ===== ALTERADO: total considera o valor aprovado quando existir =====
+        const totalOrcamentosMes = orcamentosMes.reduce((s, o) => s + valorEfetivo(o), 0)
         const qtdAguardando = orcamentosMes.filter((o) => o.status === 'aguardando').length
         const qtdAprovados = orcamentosMes.filter((o) => o.status === 'aprovado').length
         const qtdRecusados = orcamentosMes.filter((o) => o.status === 'recusado').length
@@ -121,7 +142,6 @@ function PainelGerente() {
         const metaMensal = Number(v.metaMensal) || 100000
         const bateuSemana = totalSemana >= metaSemanal
         const bateuMes = totalMes >= metaMensal
-        // ===== NOVO: taxa de conversão por vendedor =====
         const taxaConversao = qtdOrcamentosMes > 0 ? (qtdAprovados / qtdOrcamentosMes) * 100 : 0
         return {
           ...v,
@@ -152,7 +172,8 @@ function PainelGerente() {
   const pctEquipe = metaEquipe > 0 ? (totalVendidoMes / metaEquipe) * 100 : 0
   // Funil de orçamentos do mês
   const orcamentosMes = (orcamentos || []).filter((o) => noMes(o.data, ano, mes))
-  const totalOrcamentosMes = orcamentosMes.reduce((s, o) => s + valorOrcamento(o), 0)
+  // ===== ALTERADO: totais consideram o valor aprovado quando existir =====
+  const totalOrcamentosMes = orcamentosMes.reduce((s, o) => s + valorEfetivo(o), 0)
   const qtdOrcamentosMes = orcamentosMes.length
   const qtdAguardando = orcamentosMes.filter((o) => o.status === 'aguardando').length
   const qtdAprovados = orcamentosMes.filter((o) => o.status === 'aprovado').length
@@ -186,15 +207,6 @@ function PainelGerente() {
       .filter((v) => v.qtdOrcamentosMes > 0)
       .sort((a, b) => b.taxaConversao - a.taxaConversao)
   }, [dadosVendedores])
-  // ===== NOVO: orçamentos vencendo/vencidos (ação urgente) =====
-  const orcamentosUrgentes = useMemo(() => {
-    return (orcamentos || [])
-      .filter((o) => o.status === 'aguardando')
-      .map((o) => ({ ...o, val: situacaoValidade(o.prazoValidade) }))
-      .filter((o) => o.val === 'vencido' || o.val === 'proximo')
-      .sort((a, b) => String(a.prazoValidade || '').localeCompare(String(b.prazoValidade || '')))
-      .slice(0, 8)
-  }, [orcamentos])
   const motivosRecusa = useMemo(() => {
     const contagem = {}
     orcamentosMes
@@ -215,7 +227,6 @@ function PainelGerente() {
   }, [orcamentos, filtroCliente])
   return (
     <div className="painel-gerente">
-      {/* ===== NOVO: toast de sucesso ===== */}
       {aviso && <div className="toast-sucesso">{aviso}</div>}
       <div className="section-head">
         <h2>👑 Painel do Gerente</h2>
@@ -252,13 +263,12 @@ function PainelGerente() {
           </label>
         </div>
       </div>
-      {/* ===== NOVO: erro de carregamento ===== */}
       {erroCarregamento && (
         <div className="aviso-erro">
           ⚠️ {erroCarregamento}
         </div>
       )}
-      {/* Cards de indicadores (KPIs) */}
+      {/* Cards de indicadores (KPIs) — SEMPRE visíveis */}
       <div className="kpi-grid">
         <div className="kpi-card kpi-destaque">
           <span className="kpi-rotulo">Total vendido no mês</span>
@@ -268,7 +278,6 @@ function PainelGerente() {
             <div style={{ width: `${Math.min(100, pctEquipe)}%` }}></div>
           </div>
           <div className="kpi-sub"><strong>{fmtPct(pctEquipe)}</strong> da meta no mês</div>
-          {/* ===== NOVO: variação vs mês anterior ===== */}
           {variacaoMes !== null && (
             <div className={`kpi-variacao ${variacaoMes >= 0 ? 'variacao-ok' : 'variacao-ruim'}`}>
               {variacaoMes >= 0 ? '▲' : '▼'} {fmtPct(Math.abs(variacaoMes))} vs. mês anterior
@@ -291,53 +300,7 @@ function PainelGerente() {
           <div className="kpi-sub">batendo a meta no mês selecionado</div>
         </div>
       </div>
-      {/* ===== NOVO: orçamentos urgentes (ação) ===== */}
-      {orcamentosUrgentes.length > 0 && (
-        <div className="painel painel-acao">
-          <h3 className="top-titulo">⏰ Orçamentos vencendo ou vencidos (aguardando)</h3>
-          <p className="dica-sub">Ações urgentes: cobrar aprovação ou renovar o prazo antes de perder a venda.</p>
-          <div className="tabela-wrap">
-            <table className="tabela">
-              <thead>
-                <tr>
-                  <th>Cliente</th>
-                  <th>Vendedor</th>
-                  <th>Valor</th>
-                  <th>Válido até</th>
-                </tr>
-              </thead>
-              <tbody>
-                {orcamentosUrgentes.map((o) => {
-                  const cli = clientePorId(o.clienteId)
-                  const vend = vendedores.find((v) => v.id === o.vendedorId)
-                  return (
-                    <tr key={o.id}>
-                      <td>{cli ? `#${cli.codigo} ${cli.nome}` : '(cliente removido)'}</td>
-                      <td>{vend ? vend.nome : '-'}</td>
-                      <td className="mini-num">{fmtValor(valorOrcamento(o))}</td>
-                      <td>
-                        <span className={`validade validade-${o.val}`}>
-                          {fmtData(o.prazoValidade)}
-                          {o.val === 'vencido' && ' (vencido)'}
-                          {o.val === 'proximo' && ' (vence em breve)'}
-                        </span>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-      {/* Funil de orçamentos */}
-      <div className="orcamento-contadores">
-        <span className={'badge ' + STATUS_META.aguardando.classe}>⏳ Aguardando: {qtdAguardando}</span>
-        <span className={'badge ' + STATUS_META.aprovado.classe}>✅ Aprovados: {qtdAprovados}</span>
-        <span className={'badge ' + STATUS_META.recusado.classe}>❌ Recusados: {qtdRecusados}</span>
-        <span className="badge badge-conversao">🎯 Conversão: {fmtPct(taxaConversao)}</span>
-      </div>
-      {/* Ranking de vendas */}
+      {/* Ranking de vendas — SEMPRE visível */}
       <h3 className="top-titulo">📊 Ranking de Vendas — {MESES[mes - 1]} de {ano}</h3>
       {dadosVendedores.length === 0 ? (
         <p className="empty">Nenhum vendedor cadastrado.</p>
@@ -395,100 +358,93 @@ function PainelGerente() {
           </table>
         </div>
       )}
-      {/* ===== NOVO: ranking por taxa de conversão ===== */}
-      {rankingConversao.length > 0 && (
-        <>
-          <h3 className="top-titulo">🎯 Ranking de Conversão (Orçamento → Venda) — {MESES[mes - 1]} de {ano}</h3>
+      {/* ===== SEÇÃO COLAPSÁVEL: Orçamentos (funil + conversão + por vendedor) ===== */}
+      <SecaoColapsavel
+        titulo={`📋 Orçamentos — ${MESES[mes - 1]} de ${ano}`}
+        aberto={abertoOrcamentos}
+        aoAlternar={() => setAbertoOrcamentos((x) => !x)}
+        contador={`${qtdAguardando} aguardando`}
+      >
+        <div className="orcamento-contadores">
+          <span className={'badge ' + STATUS_META.aguardando.classe}>⏳ Aguardando: {qtdAguardando}</span>
+          <span className={'badge ' + STATUS_META.aprovado.classe}>✅ Aprovados: {qtdAprovados}</span>
+          <span className={'badge ' + STATUS_META.recusado.classe}>❌ Recusados: {qtdRecusados}</span>
+          <span className="badge badge-conversao">🎯 Conversão: {fmtPct(taxaConversao)}</span>
+          <span className="badge badge-total">💰 Total: {fmtValor(totalOrcamentosMes)}</span>
+        </div>
+        {rankingConversao.length > 0 && (
           <div className="tabela-wrap">
             <table className="tabela">
               <thead>
                 <tr>
                   <th>#</th>
                   <th>Vendedor</th>
-                  <th>Conversão</th>
+                  <th>Aguardando</th>
                   <th>Aprovados</th>
-                  <th>Total Orç.</th>
+                  <th>Recusados</th>
+                  <th>Conversão</th>
+                  <th>Total (R$)</th>
                 </tr>
               </thead>
               <tbody>
-                {rankingConversao.map((v, i) => (
+                {rankingOrcamentos.map((v, i) => (
                   <tr key={v.id}>
                     <td className={`rank-pos ${i === 0 ? 'top1' : ''}`}>{i + 1}º</td>
                     <td><strong>{v.nome}</strong></td>
-                    <td className="rank-valor">{fmtPct(v.taxaConversao)}</td>
+                    <td className="mini-num">{v.qtdAguardando}</td>
                     <td className="mini-num">{v.qtdAprovados}</td>
-                    <td className="mini-num">{v.qtdOrcamentosMes}</td>
+                    <td className="mini-num">{v.qtdRecusados}</td>
+                    <td className="rank-valor">{fmtPct(v.taxaConversao)}</td>
+                    <td className="mini-num">{fmtValor(v.totalOrcamentosMes)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </>
-      )}
-      {/* Ranking de clientes cadastrados */}
-      <h3 className="top-titulo">👥 Clientes Cadastrados por Vendedor — {MESES[mes - 1]} de {ano}</h3>
-      {rankingClientes.length === 0 ? (
-        <p className="empty">Nenhum vendedor cadastrado.</p>
-      ) : (
-        <div className="tabela-wrap">
-          <table className="tabela">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Vendedor</th>
-                <th>Novos no mês</th>
-                <th>Total de clientes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rankingClientes.map((v, i) => (
-                <tr key={v.id}>
-                  <td className={`rank-pos ${i === 0 ? 'top1' : ''}`}>{i + 1}º</td>
-                  <td><strong>{v.nome}</strong></td>
-                  <td className="mini-num">{v.qtdClientesMes}</td>
-                  <td className="mini-num">{v.qtdClientesTotal}</td>
+        )}
+      </SecaoColapsavel>
+      {/* ===== SEÇÃO COLAPSÁVEL: Clientes Cadastrados ===== */}
+      <SecaoColapsavel
+        titulo={`👥 Clientes Cadastrados por Vendedor — ${MESES[mes - 1]} de ${ano}`}
+        aberto={abertoClientes}
+        aoAlternar={() => setAbertoClientes((x) => !x)}
+        contador={`${clientesNovosMes} novos`}
+      >
+        {rankingClientes.length === 0 ? (
+          <p className="empty">Nenhum vendedor cadastrado.</p>
+        ) : (
+          <div className="tabela-wrap">
+            <table className="tabela">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Vendedor</th>
+                  <th>Novos no mês</th>
+                  <th>Total de clientes</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      {/* Ranking de orçamentos por vendedor */}
-      <h3 className="top-titulo">📉 Orçamentos por Vendedor — {MESES[mes - 1]} de {ano}</h3>
-      {rankingOrcamentos.length === 0 ? (
-        <p className="empty">Nenhum vendedor cadastrado.</p>
-      ) : (
-        <div className="tabela-wrap">
-          <table className="tabela">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Vendedor</th>
-                <th>Aguardando</th>
-                <th>Aprovados</th>
-                <th>Recusados</th>
-                <th>Total (R$)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rankingOrcamentos.map((v, i) => (
-                <tr key={v.id}>
-                  <td className={`rank-pos ${i === 0 ? 'top1' : ''}`}>{i + 1}º</td>
-                  <td><strong>{v.nome}</strong></td>
-                  <td className="mini-num">{v.qtdAguardando}</td>
-                  <td className="mini-num">{v.qtdAprovados}</td>
-                  <td className="mini-num">{v.qtdRecusados}</td>
-                  <td className="mini-num">{fmtValor(v.totalOrcamentosMes)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      {/* Motivos de recusa mais comuns */}
-      {motivosRecusa.length > 0 && (
-        <>
-          <h3 className="top-titulo">🔍 Motivos de Recusa mais comuns</h3>
+              </thead>
+              <tbody>
+                {rankingClientes.map((v, i) => (
+                  <tr key={v.id}>
+                    <td className={`rank-pos ${i === 0 ? 'top1' : ''}`}>{i + 1}º</td>
+                    <td><strong>{v.nome}</strong></td>
+                    <td className="mini-num">{v.qtdClientesMes}</td>
+                    <td className="mini-num">{v.qtdClientesTotal}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </SecaoColapsavel>
+      {/* ===== SEÇÃO COLAPSÁVEL: Motivos de Recusa ===== */}
+      <SecaoColapsavel
+        titulo="🔍 Motivos de Recusa mais comuns"
+        aberto={abertoMotivos}
+        aoAlternar={() => setAbertoMotivos((x) => !x)}
+        contador={motivosRecusa.length > 0 ? `${motivosRecusa.length}` : null}
+      >
+        {motivosRecusa.length > 0 ? (
           <div className="tabela-wrap">
             <table className="tabela">
               <thead>
@@ -504,84 +460,105 @@ function PainelGerente() {
               </tbody>
             </table>
           </div>
-        </>
-      )}
-      {/* Orçamentos não faturados de todos os vendedores */}
-      <h3 className="top-titulo">📋 Todos os Orçamentos (todos os vendedores)</h3>
-      <div className="filtro-orcamento">
-        <label>
-          Filtrar por cliente
-          <select value={filtroCliente} onChange={(e) => setFiltroCliente(e.target.value)}>
-            <option value="">Todos os clientes</option>
-            {[...(clientes || [])].sort((a, b) => Number(a.codigo) - Number(b.codigo)).map((c) => (
-              <option key={c.id} value={c.id}>#{c.codigo} — {c.nome}</option>
-            ))}
-          </select>
-        </label>
-      </div>
-      {orcamentosFiltrados.length === 0 ? (
-        <p className="empty">Nenhum orçamento registrado.</p>
-      ) : (
-        <div className="tabela-wrap">
-          <table className="tabela">
-            <thead>
-              <tr>
-                <th>Cliente</th>
-                <th>Vendedor</th>
-                <th>Orc. Insumos</th>
-                <th>Orc. Equip.</th>
-                <th>Valor</th>
-                <th>Status</th>
-                <th>Válido até</th>
-                <th>Motivo</th>
-                <th>Data</th>
-              </tr>
-            </thead>
-            <tbody>
-              {orcamentosFiltrados
-                .sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')))
-                .map((o) => {
-                  const cli = clientePorId(o.clienteId)
-                  const vend = vendedores.find((v) => v.id === o.vendedorId)
-                  const st = STATUS_META[o.status] || STATUS_META.aguardando
-                  const val = situacaoValidade(o.prazoValidade)
-                  return (
-                    <tr key={o.id}>
-                      <td>{cli ? `#${cli.codigo} ${cli.nome}` : '(cliente removido)'}</td>
-                      <td>{vend ? vend.nome : '-'}</td>
-                      <td>{o.pedidoInsumos || '—'}</td>
-                      <td>{o.pedidoEquipamento || '—'}</td>
-                      <td>{fmtValor(valorOrcamento(o))}</td>
-                      <td>
-                        <span className={'badge ' + st.classe}>{st.label}</span>
-                        {o.status === 'aprovado' && (o.pedidoFinalInsumos || o.pedidoFinalEquipamento) && (
-                          <div className="recusa-info aprovado-info">
-                            {o.pedidoFinalInsumos && <div>Ped. Insumos: {o.pedidoFinalInsumos}</div>}
-                            {o.pedidoFinalEquipamento && <div>Ped. Equip.: {o.pedidoFinalEquipamento}</div>}
-                          </div>
-                        )}
-                        {o.status === 'recusado' && o.concorrente && (
-                          <div className="recusa-info">Concorrente: {o.concorrente}</div>
-                        )}
-                      </td>
-                      <td>
-                        {o.prazoValidade ? (
-                          <span className={`validade validade-${val}`}>
-                            {fmtData(o.prazoValidade)}
-                            {val === 'vencido' && ' (vencido)'}
-                            {val === 'proximo' && ' (vence em breve)'}
-                          </span>
-                        ) : '—'}
-                      </td>
-                      <td>{o.motivo || '—'}</td>
-                      <td>{fmtData(o.data)}</td>
-                    </tr>
-                  )
-                })}
-            </tbody>
-          </table>
+        ) : (
+          <p className="empty">Nenhum motivo de recusa no mês.</p>
+        )}
+      </SecaoColapsavel>
+      {/* ===== SEÇÃO COLAPSÁVEL: Todos os Orçamentos ===== */}
+      <SecaoColapsavel
+        titulo="📋 Todos os Orçamentos (todos os vendedores)"
+        aberto={abertoTodosOrcamentos}
+        aoAlternar={() => setAbertoTodosOrcamentos((x) => !x)}
+        contador={orcamentos.length > 0 ? `${orcamentos.length}` : null}
+      >
+        <div className="filtro-orcamento">
+          <label>
+            Filtrar por cliente
+            <select value={filtroCliente} onChange={(e) => setFiltroCliente(e.target.value)}>
+              <option value="">Todos os clientes</option>
+              {[...(clientes || [])].sort((a, b) => Number(a.codigo) - Number(b.codigo)).map((c) => (
+                <option key={c.id} value={c.id}>#{c.codigo} — {c.nome}</option>
+              ))}
+            </select>
+          </label>
         </div>
-      )}
+        {orcamentosFiltrados.length === 0 ? (
+          <p className="empty">Nenhum orçamento registrado.</p>
+        ) : (
+          <div className="tabela-wrap">
+            <table className="tabela">
+              <thead>
+                <tr>
+                  <th>Cliente</th>
+                  <th>Vendedor</th>
+                  <th>Orc. Insumos</th>
+                  <th>Orc. Equip.</th>
+                  <th>Valor</th>
+                  <th>Status</th>
+                  <th>Válido até</th>
+                  <th>Motivo</th>
+                  <th>Data</th>
+                </tr>
+              </thead>
+              <tbody>
+                {orcamentosFiltrados
+                  .sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')))
+                  .map((o) => {
+                    const cli = clientePorId(o.clienteId)
+                    const vend = vendedores.find((v) => v.id === o.vendedorId)
+                    const st = STATUS_META[o.status] || STATUS_META.aguardando
+                    const val = situacaoValidade(o.prazoValidade)
+                    // ===== NOVO: valor aprovado vs orçado =====
+                    const temAprovado = o.status === 'aprovado' && o.valorAprovado != null && Number(o.valorAprovado) > 0
+                    const valorOrcado = valorOrcamento(o)
+                    return (
+                      <tr key={o.id}>
+                        <td>{cli ? `#${cli.codigo} ${cli.nome}` : '(cliente removido)'}</td>
+                        <td>{vend ? vend.nome : '-'}</td>
+                        <td>{o.pedidoInsumos || '—'}</td>
+                        <td>{o.pedidoEquipamento || '—'}</td>
+                        {/* ===== ALTERADO: mostra Orçado vs Aprovado ===== */}
+                        <td>
+                          {temAprovado ? (
+                            <div className="venda-grupo">
+                              <span className="venda-desc">Orçado: {fmtValor(valorOrcado)}</span>
+                              <span className="venda-valor">Aprovado: {fmtValor(o.valorAprovado)}</span>
+                            </div>
+                          ) : (
+                            fmtValor(valorOrcado)
+                          )}
+                        </td>
+                        <td>
+                          <span className={'badge ' + st.classe}>{st.label}</span>
+                          {o.status === 'aprovado' && (o.pedidoFinalInsumos || o.pedidoFinalEquipamento) && (
+                            <div className="recusa-info aprovado-info">
+                              {o.pedidoFinalInsumos && <div>Ped. Insumos: {o.pedidoFinalInsumos}</div>}
+                              {o.pedidoFinalEquipamento && <div>Ped. Equip.: {o.pedidoFinalEquipamento}</div>}
+                            </div>
+                          )}
+                          {o.status === 'recusado' && o.concorrente && (
+                            <div className="recusa-info">Concorrente: {o.concorrente}</div>
+                          )}
+                        </td>
+                        <td>
+                          {o.prazoValidade ? (
+                            <span className={`validade validade-${val}`}>
+                              {fmtData(o.prazoValidade)}
+                              {val === 'vencido' && ' (vencido)'}
+                              {val === 'proximo' && ' (vence em breve)'}
+                            </span>
+                          ) : '—'}
+                        </td>
+                        <td>{o.motivo || '—'}</td>
+                        <td>{fmtData(o.data)}</td>
+                      </tr>
+                    )
+                  })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </SecaoColapsavel>
     </div>
   )
 }

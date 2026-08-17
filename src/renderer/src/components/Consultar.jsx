@@ -7,6 +7,7 @@ const EXEMPLOS = [
   'Qual produto tem maior giro na minha carteira e quem ainda não compra?',
   'Quais clientes mais compram reagentes de bioquímica e qual o ticket médio?'
 ]
+
 // ===== Mini-renderizador de Markdown (sem dependências) =====
 function escaparHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -18,20 +19,83 @@ function renderizarLinha(linha) {
   t = t.replace(/`([^`]+)`/g, '<code>$1</code>')
   return t
 }
+// ===== detecta se uma linha é uma tabela markdown =====
+function ehLinhaTabela(linha) {
+  return /^\s*\|/.test(linha) || /^\s*\|?[^|]+\|/.test(linha)
+}
+// ===== converte um bloco de linhas de tabela em JSX <table> =====
+function renderizarTabela(linhas) {
+  const dados = []
+  for (const linha of linhas) {
+    const celulas = linha
+      .trim()
+      .replace(/^\|/, '')
+      .replace(/\|$/, '')
+      .split('|')
+      .map((c) => c.trim())
+    dados.push(celulas)
+  }
+  // Remove a linha de separação (ex.: | --- | --- |)
+  const semSeparador = dados.filter(
+    (cel) => !(cel.length > 0 && cel.every((c) => /^:?-{2,}:?$/.test(c)))
+  )
+  if (semSeparador.length === 0) return null
+  const cabecalho = semSeparador[0]
+  const corpo = semSeparador.slice(1)
+  return (
+    <div className="tabela-wrap" key={'tbl' + Math.random()}>
+      <table className="tabela ia-tabela">
+        <thead>
+          <tr>
+            {cabecalho.map((c, i) => (
+              <th key={i} dangerouslySetInnerHTML={{ __html: renderizarLinha(c) }} />
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {corpo.map((cel, i) => (
+            <tr key={i}>
+              {cel.map((c, j) => (
+                <td key={j} dangerouslySetInnerHTML={{ __html: renderizarLinha(c) }} />
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
 function renderizarMarkdown(texto) {
   if (!texto) return null
   const linhas = String(texto).split('\n')
   const blocos = []
   let listaAtual = null
   let citacaoAtual = null
+  let tabelaAtual = null
   const fecharLista = () => {
     if (listaAtual) { blocos.push(<ul key={'ul' + blocos.length}>{listaAtual}</ul>); listaAtual = null }
   }
   const fecharCitacao = () => {
     if (citacaoAtual) { blocos.push(<blockquote key={'bq' + blocos.length}>{citacaoAtual}</blockquote>); citacaoAtual = null }
   }
+  const fecharTabela = () => {
+    if (tabelaAtual) {
+      const tbl = renderizarTabela(tabelaAtual)
+      if (tbl) blocos.push(tbl)
+      tabelaAtual = null
+    }
+  }
   for (const linha of linhas) {
     const l = linha.trim()
+    // ===== acumula linhas de tabela =====
+    if (ehLinhaTabela(l)) {
+      fecharLista()
+      fecharCitacao()
+      tabelaAtual = tabelaAtual || []
+      tabelaAtual.push(l)
+      continue
+    }
+    fecharTabela()
     if (l.startsWith('>')) {
       fecharLista()
       citacaoAtual = citacaoAtual || []
@@ -58,6 +122,7 @@ function renderizarMarkdown(texto) {
   }
   fecharLista()
   fecharCitacao()
+  fecharTabela()
   return blocos
 }
 // ===== Separa a "Sugestão de Ação Prática" do restante da resposta =====
@@ -84,9 +149,20 @@ export default function Consultar({ usuario }) {
   const [erro, setErro] = useState('')
   const [avaliacao, setAvaliacao] = useState(null)
   const [feedbackMsg, setFeedbackMsg] = useState('')
-  // ===== NOVO: controle do modal centralizado =====
+  // ===== controle do modal centralizado =====
   const [modalAberto, setModalAberto] = useState(false)
-  // ===== NOVO: feedback de sucesso (toast) =====
+  // ===== NOVO: chat de acompanhamento (follow-up) =====
+  const [historico, setHistorico] = useState([])
+  const [seguimento, setSeguimento] = useState('')
+  const [enviandoSeguimento, setEnviandoSeguimento] = useState(false)
+  const historicoRef = useRef(null)
+  // ===== NOVO: rola o chat para o fim quando chega mensagem nova =====
+  useEffect(() => {
+    if (historicoRef.current) {
+      historicoRef.current.scrollTop = historicoRef.current.scrollHeight
+    }
+  }, [historico])
+  // ===== feedback de sucesso (toast) =====
   const [aviso, setAviso] = useState('')
   const avisoTimer = useRef(null)
   const mostrarAviso = (msg) => {
@@ -122,7 +198,7 @@ export default function Consultar({ usuario }) {
     const cursor = e.target.selectionStart
     setPergunta(valor)
     setPosCursor(cursor)
-    // ===== NOVO: limpa a resposta anterior ao digitar nova pergunta =====
+    // ===== limpa a resposta anterior ao digitar nova pergunta =====
     if (resposta) {
       setResposta('')
       setConsultaId(null)
@@ -189,13 +265,16 @@ export default function Consultar({ usuario }) {
     setResposta('')
     setAvaliacao(null)
     setFeedbackMsg('')
-    // ===== NOVO: abre o modal imediatamente (mostra "gerando...") =====
+    // ===== abre o modal imediatamente (mostra "gerando...") =====
     setModalAberto(true)
     try {
-      const res = await window.api.consultarIA(p)
+      // ===== ALTERADO: envia { pergunta, historico } para o backend =====
+      const res = await window.api.consultarIA({ pergunta: p, historico: [] })
       if (res && res.ok) {
         setResposta(res.texto || '')
         setConsultaId(res.consultaId || null)
+        // ===== NOVO: inicia o histórico com a primeira troca =====
+        setHistorico([{ pergunta: p, resposta: res.texto || '' }])
         if (!res.texto) setErro('A IA não retornou resposta. Tente reformular.')
       } else {
         setErro((res && res.erro) || 'Erro ao consultar.')
@@ -206,7 +285,36 @@ export default function Consultar({ usuario }) {
       setCarregando(false)
     }
   }
-  // ===== NOVO: fechar o modal =====
+  // ===== NOVO: pergunta de acompanhamento (mantém o contexto da conversa) =====
+  async function perguntarSeguimento() {
+    const p = seguimento.trim()
+    if (!p || carregando || enviandoSeguimento) return
+    setEnviandoSeguimento(true)
+    // adiciona a pergunta do usuário (resposta vazia = "gerando...")
+    setHistorico((h) => [...h, { pergunta: p, resposta: '' }])
+    setSeguimento('')
+    try {
+      // limita o histórico às últimas 10 trocas para não estourar o contexto
+      const res = await window.api.consultarIA({ pergunta: p, historico: historico.slice(-10) })
+      setHistorico((h) => {
+        const novo = [...h]
+        const ultima = novo[novo.length - 1]
+        ultima.resposta = res && res.ok
+          ? (res.texto || '(resposta vazia)')
+          : ((res && res.erro) || 'Erro ao consultar.')
+        return novo
+      })
+    } catch (e) {
+      setHistorico((h) => {
+        const novo = [...h]
+        novo[novo.length - 1].resposta = 'Falha na consulta: ' + String(e)
+        return novo
+      })
+    } finally {
+      setEnviandoSeguimento(false)
+    }
+  }
+  // ===== fechar o modal =====
   function fecharModal() {
     setModalAberto(false)
     setCarregando(false)
@@ -214,8 +322,12 @@ export default function Consultar({ usuario }) {
     setErro('')
     setAvaliacao(null)
     setFeedbackMsg('')
+    // ===== NOVO: limpa a conversa ao fechar =====
+    setHistorico([])
+    setSeguimento('')
+    setEnviandoSeguimento(false)
   }
-  // ===== NOVO: permite trocar a avaliação (não trava) =====
+  // ===== permite trocar a avaliação (não trava) =====
   async function avaliar(nota) {
     if (!consultaId) return
     // Se clicar no mesmo botão já avaliado, desfaz
@@ -239,9 +351,10 @@ export default function Consultar({ usuario }) {
       setFeedbackMsg('Falha ao salvar avaliação: ' + String(e))
     }
   }
-  // ===== NOVO: copiar resposta =====
+  // ===== ALTERADO: copiar a última resposta da conversa =====
   async function copiarResposta() {
-    const texto = resposta || ''
+    const ultima = historico[historico.length - 1]
+    const texto = ultima ? ultima.resposta : (resposta || '')
     try {
       await navigator.clipboard.writeText(texto)
       mostrarAviso('📋 Resposta copiada!')
@@ -268,10 +381,9 @@ export default function Consultar({ usuario }) {
       setAnalisando(false)
     }
   }
-  const { principal, sugestao } = separarSugestao(resposta)
   return (
     <div className="consultar">
-      {/* ===== NOVO: toast de sucesso ===== */}
+      {/* ===== toast de sucesso ===== */}
       {aviso && <div className="toast-sucesso">{aviso}</div>}
       <div className="section-head">
         <h2>🔎 Consultar</h2>
@@ -293,7 +405,7 @@ export default function Consultar({ usuario }) {
       </div>
       {msgAnalise && <p className="form-erro">{msgAnalise}</p>}
       {analiseIA && (
-        // ===== NOVO: limite de altura com scroll =====
+        // ===== limite de altura com scroll =====
         <div className="ia-resultado">
           <h4>💡 Insights gerados</h4>
           <div className="markdown">{renderizarMarkdown(analiseIA)}</div>
@@ -342,7 +454,7 @@ export default function Consultar({ usuario }) {
         ))}
       </div>
       {erro && !modalAberto && <p className="form-erro">{erro}</p>}
-      {/* ===== NOVO: MODAL CENTRALIZADO ===== */}
+      {/* ===== MODAL CENTRALIZADO com CHAT ===== */}
       {modalAberto && (
         <div className="modal-overlay" onClick={fecharModal}>
           <div className="modal modal-consulta" onClick={(e) => e.stopPropagation()}>
@@ -350,13 +462,13 @@ export default function Consultar({ usuario }) {
               <h3>💡 Resposta</h3>
               <button type="button" className="btn-acao modal-fechar" onClick={fecharModal} title="Fechar">✕</button>
             </div>
-            {carregando ? (
-              // ===== NOVO: animação de "gerando resposta" =====
+            {carregando && historico.length === 0 ? (
+              // ===== primeira consulta: animação de "gerando resposta" =====
               <div className="modal-gerando">
                 <span className="spinner"></span>
                 <p>🤖 Gerando sua resposta...</p>
               </div>
-            ) : erro ? (
+            ) : erro && historico.length === 0 ? (
               <div>
                 <p className="form-erro">{erro}</p>
                 <div className="modal-acoes">
@@ -365,23 +477,73 @@ export default function Consultar({ usuario }) {
               </div>
             ) : (
               <div className="modal-consulta-corpo">
-                {/* Avaliação + copiar */}
-                <div className="consultar-feedback">
-                  <span className="feedback-rotulo">Essa resposta foi útil?</span>
-                  <button type="button" className={'btn-feedback ' + (avaliacao === 'bom' ? 'ativo-bom' : '')} onClick={() => avaliar('bom')} title="Resposta boa — salvar como exemplo">👍 Útil</button>
-                  <button type="button" className={'btn-feedback ' + (avaliacao === 'ruim' ? 'ativo-ruim' : '')} onClick={() => avaliar('ruim')} title="Resposta não foi útil">👎 Não útil</button>
-                  <button type="button" className="btn-feedback btn-copiar" onClick={copiarResposta} title="Copiar resposta">📋 Copiar</button>
+                {/* ===== NOVO: histórico da conversa (chat) ===== */}
+                <div className="chat-historico" ref={historicoRef}>
+                  {historico.map((item, i) => (
+                    <div key={i} className="chat-bloco">
+                      <div className="chat-pergunta">
+                        <strong>👤 Você:</strong> {item.pergunta}
+                      </div>
+                      {item.resposta === '' ? (
+                        <div className="chat-resposta chat-gerando">
+                          <span className="spinner"></span> Gerando resposta...
+                        </div>
+                      ) : (
+                        <div className="chat-resposta">
+                          {(() => {
+                            const { principal, sugestao } = separarSugestao(item.resposta)
+                            return (
+                              <>
+                                {sugestao && (
+                                  <div className="sugestao-card">
+                                    <strong className="sugestao-titulo">🎯 Sugestão de Ação Prática</strong>
+                                    <div className="markdown">{renderizarMarkdown(sugestao)}</div>
+                                  </div>
+                                )}
+                                {principal && <div className="markdown resposta-principal">{renderizarMarkdown(principal)}</div>}
+                              </>
+                            )
+                          })()}
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
-                {feedbackMsg && <p className="feedback-msg">{feedbackMsg}</p>}
-                {sugestao && (
-                  <div className="sugestao-card">
-                    <strong className="sugestao-titulo">🎯 Sugestão de Ação Prática</strong>
-                    <div className="markdown">{renderizarMarkdown(sugestao)}</div>
-                  </div>
+                {/* Avaliação + copiar (na última resposta concluída) */}
+                {!carregando && historico.length > 0 && historico[historico.length - 1].resposta !== '' && (
+                  <>
+                    <div className="consultar-feedback">
+                      <span className="feedback-rotulo">Essa resposta foi útil?</span>
+                      <button type="button" className={'btn-feedback ' + (avaliacao === 'bom' ? 'ativo-bom' : '')} onClick={() => avaliar('bom')} title="Resposta boa — salvar como exemplo">👍 Útil</button>
+                      <button type="button" className={'btn-feedback ' + (avaliacao === 'ruim' ? 'ativo-ruim' : '')} onClick={() => avaliar('ruim')} title="Resposta não foi útil">👎 Não útil</button>
+                      <button type="button" className="btn-feedback btn-copiar" onClick={copiarResposta} title="Copiar resposta">📋 Copiar</button>
+                    </div>
+                    {feedbackMsg && <p className="feedback-msg">{feedbackMsg}</p>}
+                  </>
                 )}
-                {principal && <div className="markdown resposta-principal">{renderizarMarkdown(principal)}</div>}
-                <div className="modal-acoes">
-                  <button className="btn-primary" onClick={fecharModal}>Fechar</button>
+                {/* ===== NOVO: campo de pergunta de acompanhamento ===== */}
+                <div className="chat-input">
+                  <input
+                    type="text"
+                    value={seguimento}
+                    onChange={(e) => setSeguimento(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                        e.preventDefault()
+                        perguntarSeguimento()
+                      }
+                    }}
+                    placeholder="💬 Pergunte sobre esta resposta (ex.: o que posso oferecer junto?) — Ctrl+Enter para enviar"
+                    disabled={carregando || enviandoSeguimento}
+                  />
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={perguntarSeguimento}
+                    disabled={carregando || enviandoSeguimento || !seguimento.trim()}
+                  >
+                    {enviandoSeguimento ? '🤖...' : 'Enviar'}
+                  </button>
                 </div>
               </div>
             )}

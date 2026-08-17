@@ -44,6 +44,7 @@ function vendaNoPeriodo(v, tipoPeriodo, mes, trimestre, ano, limite) {
   }
   return vAno === ano
 }
+// ===== ALTERADO: título da tela renomeado para "Análise" (componente mantém o nome Dashboard) =====
 function Dashboard({ usuario }) {
   const [vendas, setVendas] = useState([])
   const [clientes, setClientes] = useState([])
@@ -53,7 +54,7 @@ function Dashboard({ usuario }) {
   const [mes, setMes] = useState(() => new Date().getMonth() + 1)
   const [trimestre, setTrimestre] = useState(() => Math.floor(new Date().getMonth() / 3) + 1)
   const [ano, setAno] = useState(() => new Date().getFullYear())
-  const [tipoMeta, setTipoMeta] = useState('mensal')
+  const [tipoMeta, setTipoMeta] = useState('semanal')
   const META_MENSAL = Number(usuario.metaMensal) || 100000
   const META_SEMANAL = Number(usuario.metaSemanal) || 25000
   // ===== CORREÇÃO: carregamento via Promise.all (sempre desliga) =====
@@ -149,33 +150,6 @@ function Dashboard({ usuario }) {
     const max = Math.max(...arr, 1)
     return arr.map((val, i) => ({ mes: MESES[i], valor: val, pct: (val / max) * 100 }))
   }, [vendas, ano])
-  // ===== Clientes a reativar (inativos há 30-90 dias) =====
-  // ===== ALTERADO: ignora clientes ARQUIVADOS =====
-  const clientesParaReativar = useMemo(() => {
-    const vendasPorCliente = {}
-    for (const v of vendas) {
-      if (!vendasPorCliente[v.clienteId]) vendasPorCliente[v.clienteId] = []
-      vendasPorCliente[v.clienteId].push(v.data)
-    }
-    const hoje = new Date()
-    hoje.setHours(0, 0, 0, 0)
-    const DIA = 86400000
-    return clientes
-      .filter((c) => !c.arquivado)
-      .map((c) => {
-        const datas = (vendasPorCliente[c.id] || []).slice().sort()
-        const ult = datas.length ? datas[datas.length - 1] : null
-        let dias = null
-        if (ult) {
-          const d = parseData(ult)
-          dias = d ? Math.max(0, Math.floor((hoje.getTime() - d.getTime()) / DIA)) : null
-        }
-        return { ...c, dias }
-      })
-      .filter((c) => c.dias !== null && c.dias >= 30 && c.dias <= 90)
-      .sort((a, b) => b.dias - a.dias)
-      .slice(0, 5)
-  }, [clientes, vendas])
   const metaAtual = tipoMeta === 'semanal' ? META_SEMANAL : META_MENSAL
   const valorAtual = tipoMeta === 'semanal' ? totalSemana : totais.total
   const metaAlvo =
@@ -202,7 +176,7 @@ function Dashboard({ usuario }) {
   if (carregando) {
     return (
       <div className="dashboard">
-        <div className="section-head"><h2>Dashboard</h2></div>
+        <div className="section-head"><h2>Análise</h2></div>
         <p className="empty">Carregando dados...</p>
       </div>
     )
@@ -210,7 +184,7 @@ function Dashboard({ usuario }) {
   return (
     <div className="dashboard">
       <div className="section-head">
-        <h2>Dashboard</h2>
+        <h2>Análise</h2>
       </div>
       {/* Filtros + Meta */}
       <div className="filtros">
@@ -254,10 +228,23 @@ function Dashboard({ usuario }) {
         <div className="meta-box">
           <div className="meta-top">
             <span className="meta-label">Meta</span>
-            <select className="meta-select" value={tipoMeta} onChange={(e) => setTipoMeta(e.target.value)}>
-              <option value="semanal">Semanal</option>
-              <option value="mensal">Mensal</option>
-            </select>
+            {/* ===== ALTERADO: botão interruptor (Semanal | Mensal) em vez de select ===== */}
+            <div className="meta-toggle">
+              <button
+                type="button"
+                className={'meta-toggle-btn ' + (tipoMeta === 'semanal' ? 'ativo' : '')}
+                onClick={() => setTipoMeta('semanal')}
+              >
+                Semanal
+              </button>
+              <button
+                type="button"
+                className={'meta-toggle-btn ' + (tipoMeta === 'mensal' ? 'ativo' : '')}
+                onClick={() => setTipoMeta('mensal')}
+              >
+                Mensal
+              </button>
+            </div>
           </div>
           <div className="meta-valor-linha">
             <span className="meta-valor">{fmtValor(metaAtual)}</span>
@@ -375,22 +362,9 @@ function Dashboard({ usuario }) {
           </table>
         </div>
       )}
-      {/* ===== Clientes a reativar (ação) ===== */}
-      {clientesParaReativar.length > 0 && (
-        <div className="painel painel-acao">
-          <h3 className="top-titulo">📞 Clientes a Reativar (inativos 30–90 dias)</h3>
-          <p className="dica-sub">Clientes que compraram, mas estão há 1 a 3 meses sem pedir. Ótima oportunidade de contato.</p>
-          <ul className="reativar-lista">
-            {clientesParaReativar.map((c) => (
-              <li key={c.id}>
-                <span className="reativar-nome">{c.nome}</span>
-                <span className="reativar-dias">{c.dias} dias sem compra</span>
-                {c.cidade && <span className="reativar-cidade">{c.cidade}</span>}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      {/* ===== REMOVIDO: bloco "Clientes a Reativar (inativos 30–90 dias)" =====
+           Era redundante com a decisão da Home (foco em compra recorrente,
+           não em clientes parados) e foi retirado. */}
     </div>
   )
 }

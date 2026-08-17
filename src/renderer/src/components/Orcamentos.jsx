@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { confirmar } from '../utils/confirmar'
 import { fmtValor, fmtData, MESES_NOME, dataLocalISO, mascaraMoeda, moedaParaMascara, parseMoeda } from '../utils/format'
 import { calcularMeta } from '../utils/financeiro'
-
 const formVazio = () => ({
   clienteId: '',
   buscaCliente: '',
@@ -16,13 +15,11 @@ const formVazio = () => ({
   prazoValidade: '',
   observacao: ''
 })
-
 const STATUS_META = {
   aguardando: { label: '⏳ Aguardando', classe: 'status-aguardando' },
   aprovado: { label: '✅ Aprovado', classe: 'status-aprovado' },
   recusado: { label: '❌ Recusado', classe: 'status-recusado' }
 }
-
 export default function Orcamentos({ usuario }) {
   const hoje = new Date()
   const anoAtual = hoje.getFullYear()
@@ -40,10 +37,11 @@ export default function Orcamentos({ usuario }) {
   // Modal de recusa
   const [recusando, setRecusando] = useState(null)
   const [recusaForm, setRecusaForm] = useState({ motivo: '', concorrente: '', observacao: '' })
-  // Modal de aprovação (novos números de pedido)
+  // Modal de aprovação (novos números de pedido + valor aprovado)
+  // ===== ALTERADO: novo campo valorAprovado =====
   const [aprovando, setAprovando] = useState(null)
-  const [aprovacaoForm, setAprovacaoForm] = useState({ pedidoInsumos: '', pedidoEquipamento: '' })
-  // ===== NOVO: feedback de sucesso (toast) =====
+  const [aprovacaoForm, setAprovacaoForm] = useState({ pedidoInsumos: '', pedidoEquipamento: '', valorAprovado: '' })
+  // ===== feedback de sucesso (toast) =====
   const [aviso, setAviso] = useState('')
   const avisoTimer = useRef(null)
   const mostrarAviso = (msg) => {
@@ -163,7 +161,6 @@ export default function Orcamentos({ usuario }) {
       clienteId: form.clienteId,
       envio: form.envio,
       pedidoInsumos: form.pedidoInsumos,
-      // ===== NOVO: converte a máscara de volta para número =====
       valorInsumos: parseMoeda(form.valorInsumos),
       pedidoEquipamento: form.pedidoEquipamento,
       valorEquipamento: parseMoeda(form.valorEquipamento),
@@ -177,7 +174,6 @@ export default function Orcamentos({ usuario }) {
       if (res.ok) {
         setOrcamentos((prev) => prev.map((x) => (x.id === editando.id ? { ...x, ...payload } : x)))
         cancelarEdicao()
-        // ===== NOVO: feedback de sucesso =====
         mostrarAviso('✅ Orçamento atualizado com sucesso!')
       } else {
         setErro(res.erro || 'Erro ao atualizar o orçamento.')
@@ -192,7 +188,6 @@ export default function Orcamentos({ usuario }) {
         setOrcamentos((prev) => [res.orcamento, ...prev])
         setForm(formVazio())
         setMostrarSugestoes(false)
-        // ===== NOVO: feedback de sucesso =====
         mostrarAviso('✅ Orçamento registrado com sucesso!')
       } else {
         setErro(res.erro || 'Erro ao registrar o orçamento.')
@@ -200,9 +195,10 @@ export default function Orcamentos({ usuario }) {
     }
   }
   // Abre o modal de aprovação pedindo o(s) novo(s) número(s) de pedido
+  // ===== ALTERADO: reseta também o valorAprovado =====
   function abrirAprovacao(o) {
     setAprovando(o)
-    setAprovacaoForm({ pedidoInsumos: '', pedidoEquipamento: '' })
+    setAprovacaoForm({ pedidoInsumos: '', pedidoEquipamento: '', valorAprovado: '' })
     setErro('')
   }
   async function confirmarAprovacao(e) {
@@ -215,9 +211,12 @@ export default function Orcamentos({ usuario }) {
       setErro('Informe ao menos o Ped. Insumos ou o Ped. Equip. para aprovar.')
       return
     }
+    // ===== NOVO: converte o valor aprovado (máscara) para número; null = mantém o orçado =====
+    const valorAprovadoNum = aprovacaoForm.valorAprovado ? parseMoeda(aprovacaoForm.valorAprovado) : null
     const res = await window.api.aprovarOrcamento(aprovando.id, {
       pedidoInsumos: pi,
-      pedidoEquipamento: pe
+      pedidoEquipamento: pe,
+      valorAprovado: valorAprovadoNum
     })
     if (res.ok) {
       setOrcamentos((prev) =>
@@ -227,13 +226,14 @@ export default function Orcamentos({ usuario }) {
                 ...x,
                 status: 'aprovado',
                 pedidoFinalInsumos: pi,
-                pedidoFinalEquipamento: pe
+                pedidoFinalEquipamento: pe,
+                // ===== NOVO: guarda o valor aprovado na lista local =====
+                valorAprovado: valorAprovadoNum
               }
             : x
         )
       )
       setAprovando(null)
-      // ===== NOVO: feedback de sucesso =====
       mostrarAviso('✅ Orçamento aprovado e importado para Vendas!')
     } else {
       setErro(res.erro || 'Erro ao aprovar orçamento.')
@@ -263,7 +263,6 @@ export default function Orcamentos({ usuario }) {
         )
       )
       setRecusando(null)
-      // ===== NOVO: feedback de sucesso =====
       mostrarAviso('❌ Orçamento recusado.')
     } else {
       setErro(res.erro || 'Erro ao recusar orçamento.')
@@ -271,17 +270,14 @@ export default function Orcamentos({ usuario }) {
     }
   }
   async function deletar(o) {
-    // ===== NOVO: usa o confirmar do utils (consistente com Clientes/Vendas) =====
     const confirmado = confirmar('Excluir este orçamento?')
     if (!confirmado) return
     await window.api.deletarOrcamento(o.id)
     setOrcamentos((prev) => prev.filter((x) => x.id !== o.id))
-    // ===== NOVO: feedback de sucesso =====
     mostrarAviso('🗑️ Orçamento excluído.')
   }
   return (
     <div className="orcamentos">
-      {/* ===== NOVO: toast de sucesso ===== */}
       {aviso && <div className="toast-sucesso">{aviso}</div>}
       <div className="section-head">
         <h2>Orçamentos</h2>
@@ -414,7 +410,6 @@ export default function Orcamentos({ usuario }) {
           </label>
           <label>
             Valor Insumos
-            {/* ===== NOVO: máscara de moeda ===== */}
             <input
               inputMode="decimal"
               value={form.valorInsumos}
@@ -432,7 +427,6 @@ export default function Orcamentos({ usuario }) {
           </label>
           <label>
             Valor Equip.
-            {/* ===== NOVO: máscara de moeda ===== */}
             <input
               inputMode="decimal"
               value={form.valorEquipamento}
@@ -483,7 +477,6 @@ export default function Orcamentos({ usuario }) {
                 <th>Cliente</th>
                 {usuario.admin && <th>Vendedor</th>}
                 <th>Envio</th>
-                {/* ===== NOVO: colunas agrupadas (14 -> 10) ===== */}
                 <th>Insumos</th>
                 <th>Equip.</th>
                 <th>Frete</th>
@@ -519,7 +512,6 @@ export default function Orcamentos({ usuario }) {
                     </td>
                     {usuario.admin && <td>{vend ? vend.nome : '-'}</td>}
                     <td>{o.envio || '—'}</td>
-                    {/* ===== NOVO: descrição + valor agrupados ===== */}
                     <td className="venda-grupo">
                       {o.pedidoInsumos && <span className="venda-desc">{o.pedidoInsumos}</span>}
                       <span className="venda-valor">{fmtValor(o.valorInsumos)}</span>
@@ -529,20 +521,29 @@ export default function Orcamentos({ usuario }) {
                       <span className="venda-valor">{fmtValor(o.valorEquipamento)}</span>
                     </td>
                     <td>{o.frete ? (String(o.frete).includes('%') ? o.frete : fmtValor(String(o.frete).replace(',', '.'))) : '—'}</td>
-                    <td className="valor-meta">{fmtValor(calcularMeta(o))}</td>
+                    {/* ===== ALTERADO: mostra Orçado vs Aprovado quando houver valor aprovado ===== */}
+                    <td className="valor-meta">
+                      {o.status === 'aprovado' && o.valorAprovado != null ? (
+                        <>
+                          <span className="venda-desc">Orçado: {fmtValor((Number(o.valorInsumos) || 0) + (Number(o.valorEquipamento) || 0))}</span>
+                          <span className="venda-valor">Aprovado: {fmtValor(o.valorAprovado)}</span>
+                        </>
+                      ) : (
+                        fmtValor(calcularMeta(o))
+                      )}
+                    </td>
                     <td>{fmtData(o.data)}</td>
                     <td>{fmtData(o.prazoValidade) || '—'}</td>
                     <td className="acoes">
-  {o.status === 'aguardando' && (
-    <>
-      {/* ===== SÓ ÍCONES (economiza espaço em telas pequenas) ===== */}
-      <button className="btn-acao" onClick={() => abrirEdicao(o)} title="Editar orçamento">✏️</button>
-      <button className="btn-acao btn-acao-ok" onClick={() => abrirAprovacao(o)} title="Aprovar (importar para Vendas)">✅</button>
-      <button className="btn-acao btn-acao-danger" onClick={() => abrirRecusa(o)} title="Recusar orçamento">❌</button>
-    </>
-  )}
-  <button className="btn-acao btn-acao-danger" onClick={() => deletar(o)} title="Excluir orçamento">🗑️</button>
-</td>
+                      {o.status === 'aguardando' && (
+                        <>
+                          <button className="btn-acao" onClick={() => abrirEdicao(o)} title="Editar orçamento">✏️</button>
+                          <button className="btn-acao btn-acao-ok" onClick={() => abrirAprovacao(o)} title="Aprovar (importar para Vendas)">✅</button>
+                          <button className="btn-acao btn-acao-danger" onClick={() => abrirRecusa(o)} title="Recusar orçamento">❌</button>
+                        </>
+                      )}
+                      <button className="btn-acao btn-acao-danger" onClick={() => deletar(o)} title="Excluir orçamento">🗑️</button>
+                    </td>
                   </tr>
                 )
               })}
@@ -550,16 +551,19 @@ export default function Orcamentos({ usuario }) {
           </table>
         </div>
       )}
-      {/* Modal de aprovação — pede o(s) novo(s) número(s) de pedido (MANTIDO) */}
+      {/* Modal de aprovação — pede número(s) de pedido + VALOR APROVADO */}
       {aprovando && (
         <div className="modal-overlay" onClick={() => setAprovando(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>Aprovar Orçamento</h3>
             <p className="modal-sub">
-              {clientePorId(aprovando.clienteId)?.nome || '(cliente)'} · {fmtValor(Number(aprovando.valorInsumos) + Number(aprovando.valorEquipamento))}
+              {clientePorId(aprovando.clienteId)?.nome || '(cliente)'} · Orçado: {fmtValor((Number(aprovando.valorInsumos) || 0) + (Number(aprovando.valorEquipamento) || 0))}
             </p>
             <p className="modal-info">
               Informe o número do pedido de insumos <strong>e/ou</strong> de equipamento que será importado para a aba <strong>Vendas</strong>. Preencha <strong>ao menos um</strong> dos dois.
+            </p>
+            <p className="modal-info">
+              Se o cliente aprovou por um <strong>valor diferente</strong> do orçado, preencha o <strong>Valor aprovado</strong>. Se deixar vazio, mantém o valor do orçamento.
             </p>
             <form onSubmit={confirmarAprovacao}>
               <label>
@@ -579,6 +583,17 @@ export default function Orcamentos({ usuario }) {
                   placeholder="Número do pedido de equipamento"
                 />
               </label>
+              {/* ===== NOVO: campo Valor aprovado ===== */}
+              <label>
+                Valor aprovado (R$)
+                <input
+                  inputMode="decimal"
+                  value={aprovacaoForm.valorAprovado}
+                  onChange={(e) => setAprovacaoForm({ ...aprovacaoForm, valorAprovado: mascaraMoeda(e.target.value) })}
+                  placeholder="0,00 — vazio = mantém o orçado"
+                  title="Se o cliente aprovou por um valor diferente do orçado, informe aqui"
+                />
+              </label>
               {erro && <p className="form-erro">{erro}</p>}
               <div className="modal-acoes">
                 <button type="button" className="btn-secondary" onClick={() => setAprovando(null)}>Cancelar</button>
@@ -588,7 +603,7 @@ export default function Orcamentos({ usuario }) {
           </div>
         </div>
       )}
-      {/* Modal de recusa (MANTIDO) */}
+      {/* Modal de recusa */}
       {recusando && (
         <div className="modal-overlay" onClick={() => setRecusando(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
