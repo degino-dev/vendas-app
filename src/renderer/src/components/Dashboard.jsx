@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fmtValor, fmtPct, MESES_NOME as MESES, parseData, semanaAtualRange } from '../utils/format'
-import { valorFreteDe, valorPedido, dividirFrete } from '../utils/financeiro'
+import { valorFreteDe, valorPedido } from '../utils/financeiro'
 const MULT = { mes: 1, trimestre: 3, ano: 12 }
 // ===== Calcula o período anterior equivalente (para variação) =====
 function periodoAnterior(tipoPeriodo, mes, trimestre, ano) {
@@ -44,7 +44,6 @@ function vendaNoPeriodo(v, tipoPeriodo, mes, trimestre, ano, limite) {
   }
   return vAno === ano
 }
-// ===== ALTERADO: título da tela renomeado para "Análise" (componente mantém o nome Dashboard) =====
 function Dashboard({ usuario }) {
   const [vendas, setVendas] = useState([])
   const [clientes, setClientes] = useState([])
@@ -57,7 +56,6 @@ function Dashboard({ usuario }) {
   const [tipoMeta, setTipoMeta] = useState('semanal')
   const META_MENSAL = Number(usuario.metaMensal) || 100000
   const META_SEMANAL = Number(usuario.metaSemanal) || 25000
-  // ===== CORREÇÃO: carregamento via Promise.all (sempre desliga) =====
   useEffect(() => {
     const vendedorId = usuario.admin ? null : usuario.id
     let ativo = true
@@ -80,12 +78,10 @@ function Dashboard({ usuario }) {
     return () => { ativo = false }
   }, [usuario])
   const clientePorId = (id) => clientes.find((c) => c.id === id)
-  // ===== ALTERADO: aplica o limite de comparação justa =====
   const limite = limiteComparacao(tipoPeriodo, mes, trimestre, ano)
   const vendasFiltradas = useMemo(() => {
     return vendas.filter((v) => vendaNoPeriodo(v, tipoPeriodo, mes, trimestre, ano, limite))
   }, [vendas, tipoPeriodo, mes, trimestre, ano, limite])
-  // ===== Vendas do período anterior (para variação) =====
   const vendasAnteriores = useMemo(() => {
     const ant = periodoAnterior(tipoPeriodo, mes, trimestre, ano)
     return vendas.filter((v) => vendaNoPeriodo(v, ant.tipoPeriodo, ant.mes, ant.trimestre, ant.ano, limite))
@@ -97,27 +93,28 @@ function Dashboard({ usuario }) {
       return data && data >= inicio && data <= fim
     })
   }, [vendas])
+  // ===== ALTERADO: frete NÃO entra em insumos/equipamentos/total =====
+  // O frete é somado apenas no campo "freteTotal". Total = insumos + equipamentos (sem frete).
   const totais = useMemo(() => {
     let insumos = 0, equipamentos = 0, pedInsumos = 0, pedEquipamentos = 0, freteTotal = 0
     for (const v of vendasFiltradas) {
       const vi = Number(v.valorInsumos || 0)
       const ve = Number(v.valorEquipamento || 0)
-      const { vi: viL, ve: veL } = dividirFrete(v, vi, ve)
-      insumos += viL
-      equipamentos += veL
+      insumos += vi
+      equipamentos += ve
       freteTotal += valorFreteDe(v)
       if (vi > 0) pedInsumos++
       if (ve > 0) pedEquipamentos++
     }
     return { insumos, equipamentos, total: insumos + equipamentos, pedInsumos, pedEquipamentos, freteTotal, numVendas: vendasFiltradas.length }
   }, [vendasFiltradas])
-  // ===== Total do período anterior (para variação) =====
   const totalAnterior = useMemo(() => {
     return vendasAnteriores.reduce((soma, v) => soma + valorPedido(v), 0)
   }, [vendasAnteriores])
   const totalSemana = useMemo(() => {
     return vendasSemana.reduce((soma, v) => soma + valorPedido(v), 0)
   }, [vendasSemana])
+  // ===== ALTERADO: ranking sem frete (insumos + equipamentos) =====
   const ranking = useMemo(() => {
     const mapa = {}
     for (const v of vendasFiltradas) {
@@ -126,10 +123,9 @@ function Dashboard({ usuario }) {
       }
       const vi = Number(v.valorInsumos || 0)
       const ve = Number(v.valorEquipamento || 0)
-      const { vi: viL, ve: veL } = dividirFrete(v, vi, ve)
-      mapa[v.clienteId].insumos += viL
-      mapa[v.clienteId].equipamentos += veL
-      mapa[v.clienteId].total += viL + veL
+      mapa[v.clienteId].insumos += vi
+      mapa[v.clienteId].equipamentos += ve
+      mapa[v.clienteId].total += vi + ve
     }
     return Object.values(mapa).sort((a, b) => b.total - a.total).slice(0, 20)
   }, [vendasFiltradas])
@@ -138,7 +134,6 @@ function Dashboard({ usuario }) {
     const valor = lista.reduce((soma, o) => soma + valorPedido(o), 0)
     return { qtd: lista.length, valor }
   }, [orcamentos])
-  // ===== Vendas por mês (para o gráfico) =====
   const vendasPorMes = useMemo(() => {
     const arr = Array(12).fill(0)
     for (const v of vendas) {
@@ -159,7 +154,6 @@ function Dashboard({ usuario }) {
   const pctMeta = metaAlvo > 0 ? Math.min(100, (valorAtual / metaAlvo) * 100) : 0
   const pctMetaReal = metaAlvo > 0 ? (valorAtual / metaAlvo) * 100 : 0
   const ticketMedio = totais.numVendas > 0 ? totais.total / totais.numVendas : 0
-  // ===== Variação vs período anterior =====
   const variacao = totalAnterior > 0 ? ((totais.total - totalAnterior) / totalAnterior) * 100 : null
   const rotuloPeriodo = () => {
     if (tipoPeriodo === 'mes') return `${MESES[mes - 1]} de ${ano}`
@@ -186,7 +180,6 @@ function Dashboard({ usuario }) {
       <div className="section-head">
         <h2>Análise</h2>
       </div>
-      {/* Filtros + Meta */}
       <div className="filtros">
         <label>
           Período
@@ -225,10 +218,9 @@ function Dashboard({ usuario }) {
             ))}
           </select>
         </label>
-        <div className="meta-box">
+        <div className="meta-box" title="Meta de vendas: Semanal usa a meta da semana atual; Mensal usa a meta do período selecionado (mês, trimestre ou ano). O frete NÃO entra no cálculo da meta.">
           <div className="meta-top">
             <span className="meta-label">Meta</span>
-            {/* ===== ALTERADO: botão interruptor (Semanal | Mensal) em vez de select ===== */}
             <div className="meta-toggle">
               <button
                 type="button"
@@ -259,37 +251,35 @@ function Dashboard({ usuario }) {
           </div>
         </div>
       </div>
-      {/* ===== Variação vs período anterior ===== */}
       {variacao !== null && (
-        <div className={`variacao-linha ${variacao >= 0 ? 'variacao-ok' : 'variacao-ruim'}`}>
+        <div className={`variacao-linha ${variacao >= 0 ? 'variacao-ok' : 'variacao-ruim'}`} title="Comparação com o período anterior equivalente (mesmo recorte de dias quando o período atual ainda está em andamento). Sem considerar o frete.">
           {variacao >= 0 ? '▲' : '▼'} {fmtPct(Math.abs(variacao))} vs. período anterior
         </div>
       )}
-      {/* ===== KPIs agrupados por categoria ===== */}
       <div className="kpi-secao">
         <h3 className="kpi-secao-titulo">📊 Vendas</h3>
         <div className="resumo">
-          <div className="resumo-card resumo-destaque">
+          <div className="resumo-card resumo-destaque" title="Soma de insumos + equipamentos das vendas do período (valor do pedido, SEM o frete). É a base da meta.">
             <span className="resumo-label">Vendas Totais (Ped.)</span>
             <strong>{fmtValor(totais.total)}</strong>
           </div>
-          <div className="resumo-card">
+          <div className="resumo-card" title="Soma dos valores de insumos das vendas do período (SEM o frete).">
             <span className="resumo-label">Vendas Insumos</span>
             <strong>{fmtValor(totais.insumos)}</strong>
           </div>
-          <div className="resumo-card">
+          <div className="resumo-card" title="Soma dos valores de equipamentos das vendas do período (SEM o frete).">
             <span className="resumo-label">Vendas Equipamentos</span>
             <strong>{fmtValor(totais.equipamentos)}</strong>
           </div>
-          <div className="resumo-card">
+          <div className="resumo-card" title="Quantidade de vendas registradas no período selecionado.">
             <span className="resumo-label">Nº de Vendas</span>
             <strong>{totais.numVendas}</strong>
           </div>
-          <div className="resumo-card">
+          <div className="resumo-card" title="Total vendido ÷ nº de vendas. Valor médio por venda no período (sem frete).">
             <span className="resumo-label">Ticket Médio</span>
             <strong>{fmtValor(ticketMedio)}</strong>
           </div>
-          <div className="resumo-card">
+          <div className="resumo-card" title="Soma de todo o frete cobrado nas vendas do período. O frete NÃO entra na meta nem nas vendas de insumos/equipamentos.">
             <span className="resumo-label">Frete Total</span>
             <strong>{fmtValor(totais.freteTotal)}</strong>
           </div>
@@ -298,18 +288,17 @@ function Dashboard({ usuario }) {
       <div className="kpi-secao">
         <h3 className="kpi-secao-titulo">📁 Carteira & Pipeline</h3>
         <div className="resumo">
-          <div className="resumo-card">
+          <div className="resumo-card" title="Total de clientes na sua carteira (não depende do período selecionado).">
             <span className="resumo-label">Clientes na Carteira</span>
             <strong>{clientes.length}</strong>
           </div>
-          <div className="resumo-card">
+          <div className="resumo-card" title="Orçamentos com status 'aguardando' e o valor total deles (soma dos pedidos).">
             <span className="resumo-label">Orç. Aguardando</span>
             <strong>{orcamentosAguardando.qtd}</strong>
             <span className="resumo-data">{fmtValor(orcamentosAguardando.valor)}</span>
           </div>
         </div>
       </div>
-      {/* ===== Gráfico de vendas por mês (CSS puro) ===== */}
       <h3 className="top-titulo">📈 Vendas por Mês — {ano}</h3>
       <div className="grafico-mensal">
         {vendasPorMes.map((item, i) => (
@@ -320,7 +309,6 @@ function Dashboard({ usuario }) {
           </div>
         ))}
       </div>
-      {/* Top 20 */}
       <h3 className="top-titulo">🏆 Top 20 Clientes — {rotuloPeriodo()}</h3>
       {ranking.length === 0 ? (
         <p className="empty">Nenhuma venda neste período.</p>
@@ -331,8 +319,8 @@ function Dashboard({ usuario }) {
               <tr>
                 <th>#</th>
                 <th>Nome</th>
-                <th>Total (Ped.)</th>
-                <th>% Venda</th>
+                <th title="Total vendido pelo cliente no período (insumos + equipamentos, sem frete).">Total (Ped.)</th>
+                <th title="Participação do cliente no total vendido do período (Total do cliente ÷ Total geral).">% Venda</th>
                 <th>Cidade</th>
               </tr>
             </thead>
@@ -362,9 +350,6 @@ function Dashboard({ usuario }) {
           </table>
         </div>
       )}
-      {/* ===== REMOVIDO: bloco "Clientes a Reativar (inativos 30–90 dias)" =====
-           Era redundante com a decisão da Home (foco em compra recorrente,
-           não em clientes parados) e foi retirado. */}
     </div>
   )
 }

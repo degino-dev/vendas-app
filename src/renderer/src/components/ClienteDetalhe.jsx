@@ -1,7 +1,27 @@
 import { useEffect, useRef, useState } from 'react'
 import { fmtMoeda, fmtCnpj, fmtFone, fmtDataHora, fmtData } from '../utils/format'
 import RotinaLaboratorio from './RotinaLaboratorio'
-
+// ===== NOVO: normaliza o meio de envio (corrige variações dos dados importados) =====
+const normalizarEnvio = (envio) => {
+  if (!envio) return ''
+  const e = String(envio).trim()
+  const mapa = {
+    whats: 'WhatsApp',
+    whatsapp: 'WhatsApp',
+    'whats app': 'WhatsApp',
+    'whats-app': 'WhatsApp',
+    zap: 'WhatsApp',
+    'e-mail': 'E-mail',
+    email: 'E-mail',
+    mail: 'E-mail',
+    telefone: 'Telefone',
+    tel: 'Telefone',
+    plataforma: 'Plataforma',
+    teams: 'Teams'
+  }
+  const chave = e.toLowerCase()
+  return mapa[chave] || e
+}
 const ROTULOS_TIPO = {
   ligacao: '📞 Liguei',
   promocao: '🎁 Promoção',
@@ -13,7 +33,6 @@ const STATUS_ORC = {
   aprovado: { label: '✅ Aprovado', classe: 'status-aprovado' },
   recusado: { label: '❌ Recusado', classe: 'status-recusado' }
 }
-
 const ABAS_CLIENTE = [
   { id: 'compras', rotulo: '🛒 Últimas Compras' },
   { id: 'orcamentos', rotulo: '📋 Orçamentos' },
@@ -22,14 +41,12 @@ const ABAS_CLIENTE = [
   { id: 'rotina', rotulo: '🧪 Rotina' },
   { id: 'historico', rotulo: '📞 Interações' }
 ]
-
 const estiloAbas = `
   .cliente-abas { display: flex; gap: 4px; flex-wrap: wrap; margin: 18px 0 14px; border-bottom: 2px solid #e2e8f0; }
   .cliente-aba { padding: 9px 16px; font-size: 13px; font-weight: 600; border: 1px solid transparent; border-bottom: none; border-radius: 8px 8px 0 0; background: transparent; color: #64748b; cursor: pointer; transition: all .15s; }
   .cliente-aba:hover { background: #f1f5f9; color: #0f172a; }
   .cliente-aba.ativa { background: #fff; border-color: #e2e8f0; color: #2563eb; box-shadow: inset 0 -2px 0 #2563eb; }
 `
-
 // ===== NOVO: estilo da aba Padrão de Compra =====
 const estiloPadrao = `
   .padrao-topo { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; flex-wrap: wrap; }
@@ -53,13 +70,11 @@ const estiloPadrao = `
   .badge-comecou { background: #dbeafe; color: #1d4ed8; }
   .badge-sempre { background: #dcfce7; color: #15803d; }
 `
-
 const fmtMesAno = (ym) => {
   if (!ym) return ''
   const [ano, mes] = String(ym).split('-')
   return mes + '/' + ano
 }
-
 export default function ClienteDetalhe({ clienteId, onVoltar }) {
   const [dados, setDados] = useState(null)
   const [carregando, setCarregando] = useState(true)
@@ -91,7 +106,8 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
   const [padraoMeses, setPadraoMeses] = useState(6)
   const [carregandoPadrao, setCarregandoPadrao] = useState(false)
   const [erroPadrao, setErroPadrao] = useState('')
-
+  // ===== NOVO: principal meio de comunicação (envio mais frequente nas vendas) =====
+  const [meioComunicacao, setMeioComunicacao] = useState(null)
   useEffect(() => {
     let ativo = true
     setCarregando(true)
@@ -116,13 +132,11 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
       })
     return () => { ativo = false }
   }, [clienteId])
-
   useEffect(() => {
     if (dados && dados.ok && dados.cliente) {
       setRotinaCliente(dados.cliente)
     }
   }, [dados])
-
   useEffect(() => {
     if (!rotinaCliente || !rotinaCliente.id) {
       setComprasNotas([])
@@ -136,7 +150,6 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
       .then((res) => setComprasNotas(res && res.ok ? res.itens : []))
       .catch(() => setComprasNotas([]))
   }, [rotinaCliente])
-
   useEffect(() => {
     if (!window.api || typeof window.api.historicoCliente !== 'function') {
       setHistorico([])
@@ -147,7 +160,29 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
       .then((res) => setHistorico(Array.isArray(res) ? res : []))
       .catch((err) => { console.error('Erro ao carregar histórico:', err); setHistorico([]) })
   }, [clienteId])
-
+  // ===== NOVO: calcula o principal meio de comunicação a partir das vendas =====
+  useEffect(() => {
+    if (!window.api || typeof window.api.listarVendas !== 'function') return
+    window.api
+      .listarVendas()
+      .then((lista) => {
+        const arr = Array.isArray(lista) ? lista : []
+        const contagem = {}
+        for (const v of arr) {
+          if (v.clienteId !== clienteId) continue
+          const envio = normalizarEnvio(v.envio)
+          if (!envio) continue
+          contagem[envio] = (contagem[envio] || 0) + 1
+        }
+        let top = null
+        let topN = 0
+        for (const [envio, n] of Object.entries(contagem)) {
+          if (n > topN) { topN = n; top = envio }
+        }
+        setMeioComunicacao(top ? { envio: top, total: topN } : null)
+      })
+      .catch(() => setMeioComunicacao(null))
+  }, [clienteId])
   useEffect(() => {
     if (!dados || !dados.ok || !dados.cliente || !dados.cliente.codigo) return
     const codigo = String(dados.cliente.codigo)
@@ -173,7 +208,6 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
       })
       .finally(() => setCarregandoProdutos(false))
   }, [dados, anoFiltro])
-
   useEffect(() => {
     if (!window.api || typeof window.api.notasAnos !== 'function') return
     window.api
@@ -183,7 +217,6 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
       })
       .catch((err) => console.error('Erro ao carregar anos das notas:', err))
   }, [])
-
   useEffect(() => {
     if (!window.api || typeof window.api.listarOrcamentos !== 'function') return
     setCarregandoOrc(true)
@@ -199,7 +232,6 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
       .catch((err) => { console.error('Erro ao carregar orçamentos:', err); setOrcamentos([]) })
       .finally(() => setCarregandoOrc(false))
   }, [clienteId])
-
   // ===== NOVO: carrega o padrão de compra (3/6/9/12 meses) =====
   useEffect(() => {
     if (!dados || !dados.ok || !dados.cliente || !dados.cliente.codigo) return
@@ -221,7 +253,6 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
       })
       .finally(() => setCarregandoPadrao(false))
   }, [dados, padraoMeses])
-
   const adicionarHistorico = () => {
     const desc = novaDesc.trim()
     if (!desc) return
@@ -241,7 +272,6 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
       .catch((err) => { console.error('Erro ao salvar histórico:', err); setErro('Falha ao salvar a interação.') })
       .finally(() => setSalvando(false))
   }
-
   if (carregando) {
     return (
       <div className="painel">
@@ -296,7 +326,6 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
     return { texto: 'Cliente ativo: aproveite para oferecer cross-sell dos produtos menos recorrentes.', classe: 'acao-ativo' }
   }
   const acao = proximaAcao()
-
   return (
     <div className="painel">
       <style>{estiloAbas}</style>
@@ -304,12 +333,16 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
       <div className="cliente-detalhe-topo">
         <button className="btn-voltar" onClick={onVoltar}>← Voltar</button>
         <div className="cliente-badges">
-          <span className={'badge ' + saude.classe}>{saude.label}</span>
-          <span className={'badge badge-abc abc-' + e.classeAbc}>Curva {e.classeAbc}</span>
+          <span className={'badge ' + saude.classe} title="Classificação automática: Novo (sem histórico), Ativo (compra com frequência), Atenção (demorando a voltar) ou Risco (muito tempo sem comprar).">
+            {saude.label}
+          </span>
+          <span className={'badge badge-abc abc-' + e.classeAbc} title="Curva ABC do gasto: A = clientes que mais geram receita, B = intermediários, C = menor participação.">
+            Curva {e.classeAbc}
+          </span>
         </div>
       </div>
       <h2 className="cliente-titulo">{c.nome}</h2>
-      <div className={'proxima-acao ' + acao.classe}>
+      <div className={'proxima-acao ' + acao.classe} title="Sugestão automática baseada na saúde e no histórico de compras do cliente.">
         🎯 <strong>Próxima ação:</strong> {acao.texto}
       </div>
       <div className="cliente-info-grid">
@@ -325,23 +358,43 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
         {c.whats && <div className="info-card"><span className="info-label">WhatsApp</span><span>{fmtFone(c.whats)}</span></div>}
         {c.cidade && <div className="info-card"><span className="info-label">Cidade</span><span>{c.cidade}</span></div>}
         {c.segmento && <div className="info-card"><span className="info-label">Segmento</span><span>{c.segmento}</span></div>}
+        {/* ===== NOVO: principal meio de comunicação (normalizado) ===== */}
+        <div className="info-card info-destaque" title="Meio de envio que mais aparece nas vendas deste cliente (ex.: se a maioria das vendas foi por WhatsApp, mostra WhatsApp).">
+          <span className="info-label">📞 Principal meio de comunicação</span>
+          <span>{meioComunicacao ? meioComunicacao.envio + (meioComunicacao.total > 1 ? ` (${meioComunicacao.total}×)` : '') : '—'}</span>
+        </div>
       </div>
       <div className="stats-grid">
-        <div className="stat-card"><strong>{e.totalVendas}</strong><span>Vendas</span></div>
-        <div className="stat-card stat-destaque"><strong>{fmtMoeda(e.totalGasto)}</strong><span>Total gasto</span></div>
-        <div className="stat-card"><strong>{fmtMoeda(e.ticketMedio)}</strong><span>Ticket médio</span></div>
-        <div className="stat-card"><strong>{e.intervaloDias ? e.intervaloDias + ' dias' : '—'}</strong><span>Frequência média</span></div>
-        <div className="stat-card"><strong>{e.frequenciaMensal ? e.frequenciaMensal + '/mês' : '—'}</strong><span>Compras/mês</span></div>
-        <div className="stat-card"><strong>{e.diaComum || '—'}</strong><span>Dia mais comum</span></div>
-        <div className="stat-card stat-destaque"><strong>{e.diasDesdeUltima != null ? e.diasDesdeUltima + ' dias' : '—'}</strong><span>Desde última compra</span></div>
-        <div className="stat-card"><strong>{fmtMoeda(e.totalAnoAtual)}</strong><span>Total no ano ({new Date().getFullYear()})</span></div>
+        <div className="stat-card" title="Quantidade de vendas registradas para este cliente.">
+          <strong>{e.totalVendas}</strong><span>Vendas</span>
+        </div>
+        <div className="stat-card stat-destaque" title="Soma de todos os valores das vendas deste cliente (toda a tabela de vendas dele).">
+          <strong>{fmtMoeda(e.totalGasto)}</strong><span>Total gasto</span>
+        </div>
+        <div className="stat-card" title="Total gasto ÷ número de vendas. Valor médio gasto por compra.">
+          <strong>{fmtMoeda(e.ticketMedio)}</strong><span>Ticket médio</span>
+        </div>
+        <div className="stat-card" title="Média de dias entre uma compra e outra. Quanto menor, mais frequente o cliente compra.">
+          <strong>{e.intervaloDias ? e.intervaloDias + ' dias' : '—'}</strong><span>Frequência média</span>
+        </div>
+        <div className="stat-card" title="Quantas vezes o cliente compra por mês, em média.">
+          <strong>{e.frequenciaMensal ? e.frequenciaMensal + '/mês' : '—'}</strong><span>Compras/mês</span>
+        </div>
+        <div className="stat-card" title="Dia da semana em que o cliente mais costuma comprar.">
+          <strong>{e.diaComum || '—'}</strong><span>Dia mais comum</span>
+        </div>
+        <div className="stat-card stat-destaque" title="Há quantos dias o cliente fez a última compra. Base para a saúde do cliente.">
+          <strong>{e.diasDesdeUltima != null ? e.diasDesdeUltima + ' dias' : '—'}</strong><span>Desde última compra</span>
+        </div>
+        <div className="stat-card" title="Soma das vendas deste cliente apenas no ano atual.">
+          <strong>{fmtMoeda(e.totalAnoAtual)}</strong><span>Total no ano ({new Date().getFullYear()})</span>
+        </div>
       </div>
       {e.variacaoAnual !== null && (
-        <div className={'variacao ' + (e.variacaoAnual >= 0 ? 'variacao-ok' : 'variacao-ruim')}>
+        <div className={'variacao ' + (e.variacaoAnual >= 0 ? 'variacao-ok' : 'variacao-ruim')} title="Comparação entre o total gasto no ano atual e no ano anterior.">
           {e.variacaoAnual >= 0 ? '▲' : '▼'} {Math.abs(e.variacaoAnual)}% vs ano anterior
         </div>
       )}
-
       <div className="cliente-abas">
         {ABAS_CLIENTE.map((a) => (
           <button
@@ -354,7 +407,6 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
           </button>
         ))}
       </div>
-
       {aba === 'compras' && (
         <div className="cliente-secao">
           <h3>🛒 Últimas compras</h3>
@@ -381,7 +433,6 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
           )}
         </div>
       )}
-
       {aba === 'orcamentos' && (
         <div className="cliente-secao">
           <h3>📋 Orçamentos aprovados e recusados</h3>
@@ -412,7 +463,8 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
                       return (
                         <tr key={o.id} className={'orc-status-' + o.status}>
                           <td>{fmtData(o.data)}</td>
-                          <td>{o.envio || '—'}</td>
+                          {/* ===== ALTERADO: envio normalizado (WHATS -> WhatsApp) ===== */}
+                          <td>{normalizarEnvio(o.envio) || '—'}</td>
                           <td>{o.pedidoInsumos || '—'}</td>
                           <td>{fmtMoeda(o.valorInsumos)}</td>
                           <td>{o.pedidoEquipamento || '—'}</td>
@@ -432,7 +484,6 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
           )}
         </div>
       )}
-
       {aba === 'produtos' && (
         <>
           <div className="cliente-secao">
@@ -490,7 +541,6 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
           </div>
         </>
       )}
-
       {/* ===== NOVO: aba Padrão de Compra ===== */}
       {aba === 'padrao' && (
         <div className="cliente-secao">
@@ -588,7 +638,6 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
           )}
         </div>
       )}
-
       {aba === 'rotina' && (
         <div className="cliente-secao">
           <RotinaLaboratorio
@@ -609,7 +658,6 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
           />
         </div>
       )}
-
       {aba === 'historico' && (
         <div className="cliente-secao historico-secao">
           <h3>📞 Histórico de Interações</h3>

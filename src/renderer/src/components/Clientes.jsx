@@ -15,6 +15,27 @@ const ROTULOS_TIPO_HIST = {
   proposta: '📄 Proposta',
   obs: '📝 Observação'
 }
+// ===== NOVO: opções de ordenação =====
+const OPCOES_ORDENACAO = [
+  { valor: 'nome', rotulo: 'Nome (A-Z)' },
+  { valor: 'maior-gasto', rotulo: 'Maior gasto' },
+  { valor: 'menor-gasto', rotulo: 'Menor gasto' },
+  { valor: 'ultima-compra', rotulo: 'Última compra (recente)' },
+  { valor: 'primeira-compra', rotulo: 'Primeira compra (recente)' },
+  { valor: 'mais-inativo', rotulo: 'Mais tempo sem comprar' }
+]
+// ===== NOVO: segmentos fixos do cadastro de cliente =====
+const SEGMENTOS = [
+  'LABORATÓRIO',
+  'VETERINÁRIO',
+  'INDÚSTRIA',
+  'HOSPITAL',
+  'REVENDA',
+  'UNIVERSIDADE',
+  'PREFEITURA',
+  'CLINICA',
+  'FARMÁCIA'
+]
 const formVazio = () => ({
   codigo: '', nome: '', cnpj: '', email: '', whats: '', contato: '', cidade: '', segmento: ''
 })
@@ -37,6 +58,8 @@ function Clientes({ usuario }) {
   const [filtroStatus, setFiltroStatus] = useState(null)
   const [filtroAbc, setFiltroAbc] = useState(null)
   const [buscaNome, setBuscaNome] = useState('')
+  // ===== NOVO: ordenação selecionada =====
+  const [ordenacao, setOrdenacao] = useState('nome')
   const [clienteSelecionado, setClienteSelecionado] = useState(null)
   // Histórico de interações (modal)
   const [historicoCliente, setHistoricoCliente] = useState(null)
@@ -91,6 +114,9 @@ function Clientes({ usuario }) {
       .map((cid) => ({ id: cid, total: totalPorCliente[cid] }))
       .sort((a, b) => b.total - a.total)
     const totalClientesComCompra = ranking.length
+    // ===== NOVO: mapa de posição no rank de gasto (1º, 2º...) =====
+    const rankPorId = {}
+    ranking.forEach((r, i) => { rankPorId[r.id] = i + 1 })
     return clientes
       .map((c) => {
         const datas = (vendasPorCliente[c.id] || []).slice().sort()
@@ -110,15 +136,34 @@ function Clientes({ usuario }) {
           if (percentil <= 20) abc = 'A'
           else if (percentil <= 50) abc = 'B'
         }
-        return { ...c, primeiraCompra, ultimaCompra, diasInativo, status, abc, totalGasto: totalPorCliente[c.id] || 0 }
+        return {
+          ...c, primeiraCompra, ultimaCompra, diasInativo, status, abc,
+          totalGasto: totalPorCliente[c.id] || 0,
+          // ===== NOVO: posição no rank de gasto =====
+          rank: rankPorId[c.id] || null
+        }
       })
-      // ===== ALTERADO: ativos primeiro, arquivados no FINAL =====
+      // ===== ALTERADO: aplica a ordenação escolhida (arquivados SEMPRE no final) =====
       .sort((a, b) => {
         const arq = Number(!!a.arquivado) - Number(!!b.arquivado)
         if (arq !== 0) return arq
-        return String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR')
+        switch (ordenacao) {
+          case 'maior-gasto':
+            return (b.totalGasto || 0) - (a.totalGasto || 0)
+          case 'menor-gasto':
+            return (a.totalGasto || 0) - (b.totalGasto || 0)
+          case 'ultima-compra':
+            return String(b.ultimaCompra || '').localeCompare(String(a.ultimaCompra || ''))
+          case 'primeira-compra':
+            return String(b.primeiraCompra || '').localeCompare(String(a.primeiraCompra || ''))
+          case 'mais-inativo':
+            return (b.diasInativo ?? -1) - (a.diasInativo ?? -1)
+          case 'nome':
+          default:
+            return String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR')
+        }
       })
-  }, [clientes, vendas])
+  }, [clientes, vendas, ordenacao])
   const contagemStatus = useMemo(() => {
     const cont = { ativo: 0, atencao: 0, inativo: 0, 'sem-compra': 0 }
     for (const c of clientesComIndicadores) cont[c.status]++
@@ -328,6 +373,7 @@ function Clientes({ usuario }) {
           </button>
         )}
       </div>
+      {/* ===== ALTERADO: busca + seletor de ordenação lado a lado ===== */}
       <div className="busca-cliente">
         <input
           type="text"
@@ -338,6 +384,17 @@ function Clientes({ usuario }) {
         {buscaNome && (
           <button className="btn-limpar" onClick={() => setBuscaNome('')}>✕</button>
         )}
+        {/* ===== NOVO: seletor de ordenação ===== */}
+        <select
+          className="ordena-cliente"
+          value={ordenacao}
+          onChange={(e) => setOrdenacao(e.target.value)}
+          title="Ordenar lista"
+        >
+          {OPCOES_ORDENACAO.map((o) => (
+            <option key={o.valor} value={o.valor}>{o.rotulo}</option>
+          ))}
+        </select>
       </div>
       {mostrarForm && (
         <form className="cliente-form" onSubmit={salvar}>
@@ -437,13 +494,36 @@ function Clientes({ usuario }) {
                 )}
               </div>
             </label>
+            {/* ===== ALTERADO: Segmento agora é uma lista + opção "Outro" ===== */}
             <label>
               Segmento
-              <input
-                value={form.segmento}
-                onChange={(e) => setForm({ ...form, segmento: e.target.value })}
-                placeholder="Ex.: Clínica, Hospital..."
-              />
+              <select
+                value={SEGMENTOS.includes(form.segmento) ? form.segmento : (form.segmento ? 'outro' : '')}
+                onChange={(e) => {
+                  const val = e.target.value
+                  if (val === 'outro') {
+                    // mantém o valor atual se já era um segmento livre; senão limpa para digitar
+                    setForm((f) => ({ ...f, segmento: SEGMENTOS.includes(f.segmento) ? '' : f.segmento }))
+                  } else {
+                    setForm((f) => ({ ...f, segmento: val }))
+                  }
+                }}
+              >
+                <option value="">Selecione o segmento</option>
+                {SEGMENTOS.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+                <option value="outro">Outro (digitar manualmente)</option>
+              </select>
+              {/* ===== NOVO: campo livre quando escolher "Outro" ===== */}
+              {form.segmento && !SEGMENTOS.includes(form.segmento) && (
+                <input
+                  className="segmento-outro-input"
+                  value={form.segmento}
+                  onChange={(e) => setForm({ ...form, segmento: e.target.value })}
+                  placeholder="Digite o segmento manualmente"
+                />
+              )}
             </label>
             <div className="cliente-form-acoes">
               <button type="submit" className="btn-primary">Salvar</button>
@@ -490,7 +570,13 @@ function Clientes({ usuario }) {
                 const vend = vendedorPorId(c.vendedorId)
                 return (
                   <tr key={c.id} className={c.arquivado ? 'linha-arquivada' : ''}>
-                    <td className="rank">{c.codigo}</td>
+                    {/* ===== ALTERADO: ID + rank de gasto embaixo ===== */}
+                    <td className="rank">
+                      <span className="rank-codigo">{c.codigo}</span>
+                      {c.rank != null && (
+                        <span className="rank-posicao">{c.rank}º</span>
+                      )}
+                    </td>
                     <td>
                       <button className="link-cliente" onClick={() => setClienteSelecionado(c.id)}>
                         {c.nome}
@@ -528,13 +614,18 @@ function Clientes({ usuario }) {
                       ) : '—'}
                     </td>
                     <td>
-                      <span className={`status-badge badge-${c.status}`}>
-                        {ROTULO_STATUS[c.status]}
-                        {/* ===== NOVO: dias inativos dentro do badge ===== */}
-                        {c.diasInativo !== null && (
-                          <span className="badge-dias"> · {c.diasInativo}d</span>
-                        )}
-                      </span>
+                      <div className="status-cell">
+                        <span className={`status-badge badge-${c.status}`}>
+                          {ROTULO_STATUS[c.status]}
+                          {c.diasInativo !== null && (
+                            <span className="badge-dias"> · {c.diasInativo}d</span>
+                          )}
+                        </span>
+                        {/* ===== NOVO: curva ABC embaixo do status ===== */}
+                        <span className={`curva-badge abc-${c.abc}`}>
+                          Curva {c.abc}
+                        </span>
+                      </div>
                     </td>
                     <td className="acoes">
                       <button className="btn-acao" onClick={() => abrirEdicao(c)} title="Editar">✏️</button>

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 export default function Login({ onLogin }) {
   const [usuario, setUsuario] = useState('')
@@ -6,12 +6,26 @@ export default function Login({ onLogin }) {
   const [mostrarSenha, setMostrarSenha] = useState(false)
   const [erro, setErro] = useState('')
   const [carregando, setCarregando] = useState(false)
+  // ===== NOVO: versão do sistema exibida no rodapé =====
+  const [versao, setVersao] = useState('')
   // ===== NOVO: fluxo de troca obrigatória de senha =====
   const [trocaPendente, setTrocaPendente] = useState(null) // vendedor que precisa trocar
   const [novaSenha, setNovaSenha] = useState('')
   const [confirmarSenha, setConfirmarSenha] = useState('')
   const [mostrarNovaSenha, setMostrarNovaSenha] = useState(false)
   const [salvandoTroca, setSalvandoTroca] = useState(false)
+
+  // ===== NOVO: busca a versão do sistema ao abrir a tela =====
+  useEffect(() => {
+    if (window.api && typeof window.api.versao === 'function') {
+      window.api
+        .versao()
+        .then((res) => {
+          if (res && res.ok) setVersao(res.versao)
+        })
+        .catch(() => {})
+    }
+  }, [])
 
   async function entrar(e) {
     e.preventDefault()
@@ -33,7 +47,6 @@ export default function Login({ onLogin }) {
       setErro(res.erro || 'Erro ao entrar.')
     }
   }
-
   // ===== NOVO: confirma a troca de senha (bloqueada até salvar) =====
   async function confirmarTroca(e) {
     e.preventDefault()
@@ -65,7 +78,6 @@ export default function Login({ onLogin }) {
       setErro(res.erro || 'Erro ao trocar a senha.')
     }
   }
-
   // ===== NOVO: cancela a troca e volta para o login =====
   function sairTroca() {
     setTrocaPendente(null)
@@ -73,7 +85,6 @@ export default function Login({ onLogin }) {
     setSenha('')
     setErro('')
   }
-
   // ===== NOVO: tela de troca obrigatória de senha =====
   if (trocaPendente) {
     return (
@@ -131,11 +142,16 @@ export default function Login({ onLogin }) {
           <button type="button" className="login-sair-troca" onClick={sairTroca}>
             ← Voltar para o login
           </button>
+          {/* ===== NOVO: versão na tela de troca de senha também ===== */}
+          {versao && (
+            <p style={{ textAlign: 'center', color: '#94a3b8', fontSize: 11, margin: '12px 0 0' }}>
+              v{versao}
+            </p>
+          )}
         </div>
       </div>
     )
   }
-
   // ===== Tela de login normal =====
   return (
     <div className="login-wrap">
@@ -186,6 +202,12 @@ export default function Login({ onLogin }) {
           </div>
         </form>
         <p className="login-hint">Use suas credenciais fornecidas pelo administrador.</p>
+        {/* ===== NOVO: versão do sistema no rodapé ===== */}
+        {versao && (
+          <p style={{ textAlign: 'center', color: '#94a3b8', fontSize: 11, margin: '10px 0 0' }}>
+            v{versao}
+          </p>
+        )}
       </div>
     </div>
   )

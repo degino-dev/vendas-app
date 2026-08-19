@@ -130,3 +130,25 @@ export function fmtTamanho(bytes) {
   const kb = bytes / 1024
   return kb >= 1024 ? (kb / 1024).toFixed(2) + ' MB' : Math.round(kb) + ' KB'
 }
+
+// ===== NOVO: normaliza o meio de envio (corrige variações dos dados importados) =====
+export function normalizarEnvio(envio) {
+  if (!envio) return ''
+  const e = String(envio).trim()
+  const mapa = {
+    whats: 'WhatsApp',
+    whatsapp: 'WhatsApp',
+    'whats app': 'WhatsApp',
+    'whats-app': 'WhatsApp',
+    zap: 'WhatsApp',
+    'e-mail': 'E-mail',
+    email: 'E-mail',
+    mail: 'E-mail',
+    telefone: 'Telefone',
+    tel: 'Telefone',
+    plataforma: 'Plataforma',
+    teams: 'Teams'
+  }
+  const chave = e.toLowerCase()
+  return mapa[chave] || e
+}

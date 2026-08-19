@@ -54,6 +54,8 @@ function PainelGerente() {
   const [abertoClientes, setAbertoClientes] = useState(false)
   const [abertoMotivos, setAbertoMotivos] = useState(false)
   const [abertoTodosOrcamentos, setAbertoTodosOrcamentos] = useState(false)
+  // ===== NOVO: aba ativa dos orçamentos (aguardando / aprovado / recusado) =====
+  const [abaOrcamento, setAbaOrcamento] = useState('aguardando')
   // ===== NOVO: feedback de erro no carregamento =====
   const [erroCarregamento, setErroCarregamento] = useState('')
   // ===== NOVO: toast de sucesso =====
@@ -225,6 +227,13 @@ function PainelGerente() {
     if (!filtroCliente) return lista
     return lista.filter((o) => o.clienteId === filtroCliente)
   }, [orcamentos, filtroCliente])
+  // ===== NOVO: orçamentos filtrados pela aba ativa =====
+  const orcamentosPorStatus = useMemo(() => {
+    const lista = orcamentosFiltrados
+    if (abaOrcamento === 'aprovado') return lista.filter((o) => o.status === 'aprovado')
+    if (abaOrcamento === 'recusado') return lista.filter((o) => o.status === 'recusado')
+    return lista.filter((o) => o.status === 'aguardando')
+  }, [orcamentosFiltrados, abaOrcamento])
   return (
     <div className="painel-gerente">
       {aviso && <div className="toast-sucesso">{aviso}</div>}
@@ -464,7 +473,7 @@ function PainelGerente() {
           <p className="empty">Nenhum motivo de recusa no mês.</p>
         )}
       </SecaoColapsavel>
-      {/* ===== SEÇÃO COLAPSÁVEL: Todos os Orçamentos ===== */}
+      {/* ===== SEÇÃO COLAPSÁVEL: Todos os Orçamentos (com abas) ===== */}
       <SecaoColapsavel
         titulo="📋 Todos os Orçamentos (todos os vendedores)"
         aberto={abertoTodosOrcamentos}
@@ -482,8 +491,29 @@ function PainelGerente() {
             </select>
           </label>
         </div>
-        {orcamentosFiltrados.length === 0 ? (
-          <p className="empty">Nenhum orçamento registrado.</p>
+        {/* ===== NOVO: abas de status ===== */}
+        <div className="orcamento-abas">
+          {[
+            { id: 'aguardando', rotulo: `⏳ Aguardando (${orcamentosFiltrados.filter((o) => o.status === 'aguardando').length})` },
+            { id: 'aprovado', rotulo: `✅ Aprovado (${orcamentosFiltrados.filter((o) => o.status === 'aprovado').length})` },
+            { id: 'recusado', rotulo: `❌ Recusado (${orcamentosFiltrados.filter((o) => o.status === 'recusado').length})` }
+          ].map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              className={`orcamento-aba ${abaOrcamento === a.id ? 'ativa' : ''}`}
+              onClick={() => setAbaOrcamento(a.id)}
+            >
+              {a.rotulo}
+            </button>
+          ))}
+        </div>
+        {orcamentosPorStatus.length === 0 ? (
+          <p className="empty">
+            {abaOrcamento === 'aguardando' ? 'Nenhum orçamento aguardando.' :
+             abaOrcamento === 'aprovado' ? 'Nenhum orçamento aprovado.' :
+             'Nenhum orçamento recusado.'}
+          </p>
         ) : (
           <div className="tabela-wrap">
             <table className="tabela">
@@ -494,21 +524,25 @@ function PainelGerente() {
                   <th>Orc. Insumos</th>
                   <th>Orc. Equip.</th>
                   <th>Valor</th>
-                  <th>Status</th>
-                  <th>Válido até</th>
-                  <th>Motivo</th>
+                  {/* ===== NOVO: colunas específicas por status ===== */}
+                  {abaOrcamento === 'aprovado' && <th>Valor Aprovado</th>}
+                  {abaOrcamento === 'aprovado' && <th>Diferença</th>}
+                  {abaOrcamento === 'recusado' && <th>Motivo</th>}
+                  {abaOrcamento === 'recusado' && <th>Concorrente</th>}
+                  {abaOrcamento === 'recusado' && <th>Observação</th>}
+                  {/* ===== ALTERADO: "Válido até" só na aba Aguardando ===== */}
+                  {abaOrcamento === 'aguardando' && <th>Válido até</th>}
                   <th>Data</th>
                 </tr>
               </thead>
               <tbody>
-                {orcamentosFiltrados
+                {orcamentosPorStatus
+                  .slice()
                   .sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')))
                   .map((o) => {
                     const cli = clientePorId(o.clienteId)
                     const vend = vendedores.find((v) => v.id === o.vendedorId)
-                    const st = STATUS_META[o.status] || STATUS_META.aguardando
                     const val = situacaoValidade(o.prazoValidade)
-                    // ===== NOVO: valor aprovado vs orçado =====
                     const temAprovado = o.status === 'aprovado' && o.valorAprovado != null && Number(o.valorAprovado) > 0
                     const valorOrcado = valorOrcamento(o)
                     return (
@@ -517,39 +551,62 @@ function PainelGerente() {
                         <td>{vend ? vend.nome : '-'}</td>
                         <td>{o.pedidoInsumos || '—'}</td>
                         <td>{o.pedidoEquipamento || '—'}</td>
-                        {/* ===== ALTERADO: mostra Orçado vs Aprovado ===== */}
-                        <td>
-                          {temAprovado ? (
-                            <div className="venda-grupo">
-                              <span className="venda-desc">Orçado: {fmtValor(valorOrcado)}</span>
-                              <span className="venda-valor">Aprovado: {fmtValor(o.valorAprovado)}</span>
-                            </div>
-                          ) : (
-                            fmtValor(valorOrcado)
-                          )}
-                        </td>
-                        <td>
-                          <span className={'badge ' + st.classe}>{st.label}</span>
-                          {o.status === 'aprovado' && (o.pedidoFinalInsumos || o.pedidoFinalEquipamento) && (
-                            <div className="recusa-info aprovado-info">
-                              {o.pedidoFinalInsumos && <div>Ped. Insumos: {o.pedidoFinalInsumos}</div>}
-                              {o.pedidoFinalEquipamento && <div>Ped. Equip.: {o.pedidoFinalEquipamento}</div>}
-                            </div>
-                          )}
-                          {o.status === 'recusado' && o.concorrente && (
-                            <div className="recusa-info">Concorrente: {o.concorrente}</div>
-                          )}
-                        </td>
-                        <td>
-                          {o.prazoValidade ? (
-                            <span className={`validade validade-${val}`}>
-                              {fmtData(o.prazoValidade)}
-                              {val === 'vencido' && ' (vencido)'}
-                              {val === 'proximo' && ' (vence em breve)'}
-                            </span>
-                          ) : '—'}
-                        </td>
-                        <td>{o.motivo || '—'}</td>
+                        <td>{fmtValor(valorOrcado)}</td>
+                        {/* ===== NOVO: valor aprovado + pedidos finais ===== */}
+                        {abaOrcamento === 'aprovado' && (
+                          <td>
+                            {temAprovado ? (
+                              <div className="venda-grupo">
+                                <span className="venda-valor">{fmtValor(o.valorAprovado)}</span>
+                                {(o.pedidoFinalInsumos || o.pedidoFinalEquipamento) && (
+                                  <span className="venda-desc">
+                                    {o.pedidoFinalInsumos && <div>Insumos: {o.pedidoFinalInsumos}</div>}
+                                    {o.pedidoFinalEquipamento && <div>Equip.: {o.pedidoFinalEquipamento}</div>}
+                                  </span>
+                                )}
+                              </div>
+                            ) : '—'}
+                          </td>
+                        )}
+                        {/* ===== NOVO: diferença entre valor aprovado e valor do orçamento ===== */}
+                        {abaOrcamento === 'aprovado' && (
+                          <td>
+                            {temAprovado ? (
+                              (() => {
+                                const diff = Number(o.valorAprovado) - valorOrcado
+                                const pct = valorOrcado > 0 ? (diff / valorOrcado) * 100 : 0
+                                return (
+                                  <span className={`diff-valor ${diff >= 0 ? 'diff-ok' : 'diff-ruim'}`}>
+                                    {diff >= 0 ? '▲' : '▼'} {fmtValor(Math.abs(diff))}
+                                    <span className="diff-pct"> ({pct >= 0 ? '+' : ''}{fmtPct(pct)})</span>
+                                  </span>
+                                )
+                              })()
+                            ) : '—'}
+                          </td>
+                        )}
+                        {/* ===== NOVO: motivo, concorrente e observação (texto completo) ===== */}
+                        {abaOrcamento === 'recusado' && (
+                          <td className="celula-obs" title={o.motivo || ''}>{o.motivo || '—'}</td>
+                        )}
+                        {abaOrcamento === 'recusado' && (
+                          <td className="celula-obs" title={o.concorrente || ''}>{o.concorrente || '—'}</td>
+                        )}
+                        {abaOrcamento === 'recusado' && (
+                          <td className="celula-obs" title={o.observacaoRecusa || ''}>{o.observacaoRecusa || '—'}</td>
+                        )}
+                        {/* ===== ALTERADO: "Válido até" só na aba Aguardando ===== */}
+                        {abaOrcamento === 'aguardando' && (
+                          <td>
+                            {o.prazoValidade ? (
+                              <span className={`validade validade-${val}`}>
+                                {fmtData(o.prazoValidade)}
+                                {val === 'vencido' && ' (vencido)'}
+                                {val === 'proximo' && ' (vence em breve)'}
+                              </span>
+                            ) : '—'}
+                          </td>
+                        )}
                         <td>{fmtData(o.data)}</td>
                       </tr>
                     )

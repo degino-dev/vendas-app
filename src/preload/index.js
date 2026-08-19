@@ -26,6 +26,9 @@ contextBridge.exposeInMainWorld('api', {
   deletarOrcamento: (id) => ipcRenderer.invoke('orcamentos:deletar', id),
   gerarInsights: () => ipcRenderer.invoke('insights:gerar'),
   marcarInsight: (dados) => ipcRenderer.invoke('insights:marcar', dados),
+  // ===== NOVO: segmentos (mapeamento compartilhado de produtos) =====
+  segmentosCarregar: () => ipcRenderer.invoke('segmentos:carregar'),
+  segmentosMapear: (payload) => ipcRenderer.invoke('segmentos:mapear', payload),
   analisarComIA: () => ipcRenderer.invoke('ia:analisar'),
   carregarChaveIA: () => ipcRenderer.invoke('ia:carregarChave'),
   salvarChaveIA: (chave) => ipcRenderer.invoke('ia:salvarChave', chave),
@@ -57,4 +60,6 @@ contextBridge.exposeInMainWorld('api', {
   capaRevista: (url) => ipcRenderer.invoke('promocoes:capa', url),
   onUpdateBaixado: (cb) => ipcRenderer.on('update:baixado', () => cb()),
   reiniciarParaAtualizar: () => ipcRenderer.invoke('app:reiniciarAtualizar'),
+  resumoMensal: (vendedorId) => ipcRenderer.invoke('resumo:mensal', vendedorId),
+  versao: () => ipcRenderer.invoke('app:versao'),
 })

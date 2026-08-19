@@ -11,6 +11,88 @@ import Insights from './components/Insights'
 import Consultar from './components/Consultar'
 import Promocoes from './components/Promocoes'
 
+// ===== NOVO: modal de resumo mensal (aparece 1x por mês) =====
+function ResumoMensal({ usuario, onFechar }) {
+  const [resumo, setResumo] = useState(null)
+  const [carregando, setCarregando] = useState(true)
+  useEffect(() => {
+    if (!window.api || typeof window.api.resumoMensal !== 'function') {
+      setCarregando(false)
+      return
+    }
+    window.api
+      .resumoMensal(usuario.admin ? null : usuario.id)
+      .then((res) => { setResumo(res && res.ok ? res : null); setCarregando(false) })
+      .catch(() => setCarregando(false))
+  }, [usuario])
+  if (carregando) return null
+  if (!resumo) return null
+  const fmtMes = (ym) => {
+    const [a, m] = String(ym).split('-')
+    const nomes = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
+    return nomes[Number(m) - 1] + ' de ' + a
+  }
+  const fmtMoeda = (v) => (v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+  return (
+    <div className="modal-overlay">
+      <div className="modal resumo-modal">
+        <h3>📊 Resumo de {fmtMes(resumo.mesAntigo)}</h3>
+        <p className="modal-sub">
+          {usuario.admin ? 'Visão geral de todos os vendedores' : 'Sua carteira de clientes'}
+        </p>
+        <div className="resumo-grid">
+          <div className="resumo-card">
+            <strong>{fmtMoeda(resumo.totalAnt)}</strong>
+            <span>Vendido em {fmtMes(resumo.mesAntigo)}</span>
+          </div>
+          <div className={`resumo-card ${resumo.variacao >= 0 ? 'ok' : 'ruim'}`}>
+            <strong>{resumo.variacao >= 0 ? '▲' : '▼'} {Math.abs(resumo.variacao)}%</strong>
+            <span>vs mês atual</span>
+          </div>
+          <div className="resumo-card ok">
+            <strong>{resumo.subiram}</strong>
+            <span>Clientes subiram no rank</span>
+          </div>
+          <div className="resumo-card ruim">
+            <strong>{resumo.cairam}</strong>
+            <span>Clientes caíram no rank</span>
+          </div>
+        </div>
+        {resumo.destaque && (
+          <div className="resumo-destaque">
+            🏆 <strong>Cliente destaque:</strong> {resumo.destaque.nome} — cresceu {fmtMoeda(resumo.destaque.crescimento)} no mês!
+          </div>
+        )}
+                       <div className="resumo-listas">
+          {resumo.voltaram.length > 0 && (
+            <div>
+              <h4>🔄 Voltaram a comprar</h4>
+              <ul className="resumo-nomes">
+                {resumo.voltaram.map((c, i) => (
+                  <li key={i}><span className="resumo-id">{c.codigo}</span> {c.nome}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {resumo.pararam.length > 0 && (
+            <div>
+              <h4>⏸️ Pararam de comprar</h4>
+              <ul className="resumo-nomes">
+                {resumo.pararam.map((c, i) => (
+                  <li key={i}><span className="resumo-id">{c.codigo}</span> {c.nome}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+        <div className="modal-acoes">
+          <button className="btn-primary" onClick={onFechar}>Entendi, vamos lá! 🚀</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function App() {
   const [usuario, setUsuario] = useState(null)
   // ===== ALTERADO: aba padrão vira a Home =====
@@ -21,12 +103,27 @@ function App() {
   const [msgBanco, setMsgBanco] = useState('')
   // ===== NOVO: aviso de atualização disponível =====
   const [atualizacaoPronta, setAtualizacaoPronta] = useState(false)
+  // ===== NOVO: controle do resumo mensal (1x por mês) =====
+  const [mostrarResumo, setMostrarResumo] = useState(false)
   // ===== NOVO: escuta o evento de atualização baixada =====
   useEffect(() => {
     if (window.api && window.api.onUpdateBaixado) {
       window.api.onUpdateBaixado(() => setAtualizacaoPronta(true))
     }
   }, [])
+  // ===== NOVO: mostra o resumo na 1ª abertura do mês (uma vez por mês) =====
+  useEffect(() => {
+    if (!usuario) return
+    const agora = new Date()
+    const chave =
+      'resumo_visto_' +
+      (usuario.admin ? 'admin' : usuario.id) +
+      '_' + agora.getFullYear() + '-' + String(agora.getMonth() + 1).padStart(2, '0')
+    if (!localStorage.getItem(chave)) {
+      setMostrarResumo(true)
+      localStorage.setItem(chave, '1')
+    }
+  }, [usuario])
   // --- Toda vez que o usuário muda (login/logout), volta para a aba padrão ---
   // ===== ALTERADO: vendedor entra na Home; admin entra no Painel =====
   useEffect(() => {
@@ -50,7 +147,6 @@ function App() {
         { id: 'consultar', label: '🔍 Consultar' },
         { id: 'insights', label: '💡 Dicas' },
 		{ id: 'promocoes', label: '📰 Promoções' },
-
       ]
     : [
         // ===== ALTERADO: Home é a primeira aba do vendedor =====
@@ -62,7 +158,6 @@ function App() {
         { id: 'consultar', label: '🔍 Consultar' },
         { id: 'insights', label: '💡 Dicas' },
 		{ id: 'promocoes', label: '📰 Promoções' },
-
       ]
   async function salvarCaminho(e) {
     e.preventDefault()
@@ -79,6 +174,10 @@ function App() {
   }
   return (
     <div className="app">
+      {/* ===== NOVO: modal de resumo mensal ===== */}
+      {usuario && mostrarResumo && (
+        <ResumoMensal usuario={usuario} onFechar={() => setMostrarResumo(false)} />
+      )}
       {/* ===== NOVO: aviso de atualização baixada ===== */}
       {atualizacaoPronta && (
         <div className="update-banner">

@@ -2,6 +2,27 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { confirmar } from '../utils/confirmar'
 import { fmtValor, fmtData, MESES_NOME, dataLocalISO, mascaraMoeda, moedaParaMascara, parseMoeda } from '../utils/format'
 import { calcularMeta } from '../utils/financeiro'
+// ===== NOVO: normaliza o meio de envio (corrige variações dos dados importados) =====
+const normalizarEnvio = (envio) => {
+  if (!envio) return ''
+  const e = String(envio).trim()
+  const mapa = {
+    whats: 'WhatsApp',
+    whatsapp: 'WhatsApp',
+    'whats app': 'WhatsApp',
+    'whats-app': 'WhatsApp',
+    zap: 'WhatsApp',
+    'e-mail': 'E-mail',
+    email: 'E-mail',
+    mail: 'E-mail',
+    telefone: 'Telefone',
+    tel: 'Telefone',
+    plataforma: 'Plataforma',
+    teams: 'Teams'
+  }
+  const chave = e.toLowerCase()
+  return mapa[chave] || e
+}
 const formVazio = () => ({
   clienteId: '',
   buscaCliente: '',
@@ -24,6 +45,9 @@ function Vendas({ usuario }) {
   const [filtroAno, setFiltroAno] = useState(anoAtual)
   const [filtroMes, setFiltroMes] = useState(mesAtual)
   const [filtroVendedor, setFiltroVendedor] = useState('todos')
+  // ===== NOVO: filtro por intervalo de datas (de X até Y) =====
+  const [filtroDataInicio, setFiltroDataInicio] = useState('')
+  const [filtroDataFim, setFiltroDataFim] = useState('')
   const [form, setForm] = useState(formVazio())
   const [editando, setEditando] = useState(null)
   const [erro, setErro] = useState('')
@@ -83,11 +107,18 @@ function Vendas({ usuario }) {
     if (filtroMes !== 'todos') {
       lista = lista.filter((v) => Number((v.data || '').slice(5, 7)) === filtroMes)
     }
+    // ===== NOVO: filtro por intervalo de datas =====
+    if (filtroDataInicio) {
+      lista = lista.filter((v) => (v.data || '') >= filtroDataInicio)
+    }
+    if (filtroDataFim) {
+      lista = lista.filter((v) => (v.data || '') <= filtroDataFim)
+    }
     if (filtroVendedor !== 'todos') {
       lista = lista.filter((v) => v.vendedorId === filtroVendedor)
     }
     return lista
-  }, [vendas, filtroAno, filtroMes, filtroVendedor])
+  }, [vendas, filtroAno, filtroMes, filtroVendedor, filtroDataInicio, filtroDataFim])
   // ===== ALTERADO: recém-cadastradas sempre no topo (criadoEm) =====
   const vendasOrdenadas = useMemo(() => {
     return [...vendasFiltradas].sort((a, b) => {
@@ -203,7 +234,7 @@ function Vendas({ usuario }) {
         <h2>Registro de Vendas</h2>
         <span className="total-badge">Total (Valor Ped.): {fmtValor(total)}</span>
       </div>
-      {/* Filtros separados: Ano + Mês (com nome) + Vendedor */}
+      {/* Filtros separados: Ano + Mês (com nome) + Vendedor + Intervalo de datas */}
       <div className="filtros">
         <label>
           Ano
@@ -229,6 +260,35 @@ function Vendas({ usuario }) {
             ))}
           </select>
         </label>
+        {/* ===== NOVO: filtro de data inicial ===== */}
+        <label>
+          De
+          <input
+            type="date"
+            value={filtroDataInicio}
+            onChange={(e) => setFiltroDataInicio(e.target.value)}
+          />
+        </label>
+        {/* ===== NOVO: filtro de data final ===== */}
+        <label>
+          Até
+          <input
+            type="date"
+            value={filtroDataFim}
+            onChange={(e) => setFiltroDataFim(e.target.value)}
+          />
+        </label>
+        {/* ===== NOVO: botão para limpar o intervalo ===== */}
+        {(filtroDataInicio || filtroDataFim) && (
+          <button
+            type="button"
+            className="btn-limpar-filtro"
+            onClick={() => { setFiltroDataInicio(''); setFiltroDataFim('') }}
+            title="Limpar intervalo de datas"
+          >
+            ✕ Limpar datas
+          </button>
+        )}
         {usuario.admin && (
           <label>
             Vendedor
@@ -291,6 +351,7 @@ function Vendas({ usuario }) {
             >
               <option value="">Selecione o meio de envio</option>
               <option value="WhatsApp">WhatsApp</option>
+              <option value="Telefone">Telefone</option>
               <option value="E-mail">E-mail</option>
               <option value="Teams">Teams</option>
               <option value="Plataforma">Plataforma</option>
@@ -398,7 +459,8 @@ function Vendas({ usuario }) {
                     <td className="rank">{cli ? cli.codigo : '-'}</td>
                     <td>{cli ? cli.nome : '(cliente removido)'}</td>
                     {usuario.admin && <td>{vend ? vend.nome : '-'}</td>}
-                    <td>{v.envio || '—'}</td>
+                    {/* ===== ALTERADO: envio normalizado (WHATS -> WhatsApp) ===== */}
+                    <td>{normalizarEnvio(v.envio) || '—'}</td>
                     {/* ===== NOVO: descrição + valor agrupados ===== */}
                     <td className="venda-grupo">
                       {v.pedidoInsumos && <span className="venda-desc">{v.pedidoInsumos}</span>}

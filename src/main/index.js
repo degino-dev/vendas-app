@@ -14,7 +14,9 @@ import {
   carregarConfigBackup, salvarConfigBackup,
   listarBackups, listarBackupsVendedor, listarBackupsGerais,
   restaurarBackupVendedor, restaurarBackupGeral,
-  carregarChaveIA, salvarChaveIA
+  carregarChaveIA, salvarChaveIA,
+  // ===== NOVO: segmentos (mapeamento compartilhado de produtos) =====
+  carregarSegmentos, mapearProdutoSegmento
 } from './storage'
 import { gerarInsights, atualizarEstado, gerarEstatisticasCliente } from './insights'
 import { autoUpdater } from 'electron-updater'
@@ -23,8 +25,6 @@ import { registrarConsulta, registrarAvaliacao, carregarExemplos, carregarConsul
 import { buscarFichasPorTermos } from './catalogoProdutos'
 import 'dotenv/config'
 import { configurarAutoUpdate } from './auto-update'
-
-
 // ===== DECLARAÇÕES (TEM QUE VIR ANTES DE QUALQUER handleUnico) =====
 const canaisRegistrados = new Set()
 function handleUnico(canal, fn) {
@@ -135,7 +135,6 @@ handleUnico('notas:anos', (_e) => {
   )].sort()
   return { ok: true, anos }
 })
-
 // ===== NOVO: padrão de compra do cliente (notas fiscais, 3/6/9/12 meses) =====
 handleUnico('notas:padraoCliente', (_e, codigoCliente, meses) => {
   const janela = [3, 6, 9, 12].includes(Number(meses)) ? Number(meses) : 6
@@ -143,7 +142,6 @@ handleUnico('notas:padraoCliente', (_e, codigoCliente, meses) => {
   if (!res.ok) return res
   const notas = res.dados.notas || []
   const chave = String(codigoCliente).trim()
-
   // 1) Gera os últimos N meses (YYYY-MM), do mais antigo ao mais recente
   const mesesLista = []
   const agora = new Date()
@@ -151,7 +149,6 @@ handleUnico('notas:padraoCliente', (_e, codigoCliente, meses) => {
     const d = new Date(agora.getFullYear(), agora.getMonth() - i, 1)
     mesesLista.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'))
   }
-
   // 2) Agrupa produtos por mês (chave: código|descrição)
   const porMes = {}
   const infoProduto = {}
@@ -175,13 +172,11 @@ handleUnico('notas:padraoCliente', (_e, codigoCliente, meses) => {
       }
     }
   }
-
   // 3) Classifica cada produto
   const primeirosMeses = mesesLista.slice(0, janela - 2)  // primeiros (N-2) meses
   const ultimosMeses = mesesLista.slice(janela - 2)       // últimos 2 meses
   const limiarRecorrente = Math.max(2, Math.round(janela / 2))
   const resultado = []
-
   for (const chaveProd of Object.keys(infoProduto)) {
     const info = infoProduto[chaveProd]
     const apareceuEm = mesesLista.filter((m) => porMes[m] && porMes[m][chaveProd])
@@ -196,7 +191,6 @@ handleUnico('notas:padraoCliente', (_e, codigoCliente, meses) => {
     const mediaMensal = qtdTotal / janela
     const apareceuPrimeiros = apareceuEm.filter((m) => primeirosMeses.includes(m)).length
     const apareceuUltimos = apareceuEm.filter((m) => ultimosMeses.includes(m)).length
-
     // ⚠️ Parou: comprava antes e não aparece nos últimos 2 meses
     const compravaPrimeiro = apareceuPrimeiros >= 2 || (apareceuPrimeiros >= 1 && qtdMeses >= 2)
     if (compravaPrimeiro && apareceuUltimos === 0) {
@@ -233,7 +227,6 @@ handleUnico('notas:padraoCliente', (_e, codigoCliente, meses) => {
       qtdMeses, qtdTotal, valorTotal, ultimaCompra: ultimoMes
     })
   }
-
   const ordenar = (lista) => lista.sort((a, b) => (b.valorTotal || 0) - (a.valorTotal || 0))
   return {
     ok: true,
@@ -245,8 +238,6 @@ handleUnico('notas:padraoCliente', (_e, codigoCliente, meses) => {
     esporadico: ordenar(resultado.filter((r) => r.categoria === 'esporadico')).slice(0, 20)
   }
 })
-
-
 // ===== CONSULTAR — Perguntas em linguagem natural =====
 function normalizarTexto(t) {
   return String(t || '')
@@ -397,7 +388,6 @@ handleUnico('ia:consultar', async (_e, payload) => {
     : String((payload && payload.pergunta) || '').trim()
   if (!perguntaTexto) return { ok: false, erro: 'Digite uma pergunta.' }
   const historico = Array.isArray(payload && payload.historico) ? payload.historico : []
-
   const notasRes = carregarNotas()
   const notas = notasRes.ok ? (notasRes.dados.notas || []) : []
   // ===== ALTERADO: follow-up sem termos próprios herda os termos da pergunta original =====
@@ -405,7 +395,6 @@ handleUnico('ia:consultar', async (_e, payload) => {
   if (termos.length === 0 && historico.length > 0) {
     termos = extrairTermos(historico[0].pergunta)
   }
-
   const dados = dadosParaPerfil()
   // ===== filtra clientes ARQUIVADOS (a IA não enxerga) =====
   const clientesAtivos = (dados.clientes || []).filter((c) => !c.arquivado)
@@ -422,7 +411,6 @@ handleUnico('ia:consultar', async (_e, payload) => {
     const nomeCarteira = nomePorCodigo[p.clienteCodigo]
     if (nomeCarteira) p.clienteNome = nomeCarteira
   }
-
   // ===== DETECTA se a pergunta menciona um CLIENTE específico =====
   const perguntaNorm = normalizarTexto(perguntaTexto)
   let clienteAlvo = null
@@ -438,7 +426,6 @@ handleUnico('ia:consultar', async (_e, payload) => {
   if (clienteAlvo) {
     produtosDoCliente = buscarProdutosPorCliente(notas, clienteAlvo.codigo, 6).slice(0, 20)
   }
-
   const fichasRelevantes = buscarFichasPorTermos(termos, 5)
   const orcamentosAguardando = (dados.orcamentos || [])
     .filter((o) => o.status === 'aguardando')
@@ -455,7 +442,6 @@ handleUnico('ia:consultar', async (_e, payload) => {
       }
     })
   const exemplos = carregarExemplos(sessao.id, 5)
-
   const contexto = {
     pergunta: perguntaTexto,
     termosBusca: termos,
@@ -467,7 +453,6 @@ handleUnico('ia:consultar', async (_e, payload) => {
     totalClientes: clientesAtivos.length,
     totalVendas: dados.vendas.length
   }
-
   let prompt =
     'Você é um consultor de vendas sênior, com 20 anos de experiência, que responde perguntas de vendedores.\n' +
     'Pergunta do vendedor:\n' + perguntaTexto + '\n\n' +
@@ -510,7 +495,6 @@ handleUnico('ia:consultar', async (_e, payload) => {
     '- Ordene as oportunidades por potencial: itens de uso recorrente e de maior volume primeiro.\n' +
     '- Ao final, sugira uma OFERTA CASADA objetiva (ex.: "oferte agulha + adaptador + blood stop junto com a reposição de tubos").\n' +
     '- NUNCA invente que o cliente comprou um produto que não está nas notas; apenas aponte os itens da rotina que ele NÃO compra com você como oportunidade.\n'
-
   // ===== NOVO: histórico da conversa (perguntas de acompanhamento) =====
   if (historico.length > 0) {
     prompt += '\nHISTÓRICO DA CONVERSA ATUAL (o vendedor está fazendo uma pergunta de acompanhamento sobre a resposta anterior):\n' +
@@ -520,19 +504,16 @@ handleUnico('ia:consultar', async (_e, payload) => {
       '- NÃO repita a lista completa de clientes já mostrada na resposta anterior; foque apenas no que foi perguntado agora.\n' +
       '- Continue usando APENAS os dados disponíveis; não invente clientes, produtos ou valores.\n'
   }
-
   // ===== CATÁLOGO: injeta fichas técnicas no prompt =====
   if (fichasRelevantes.length > 0) {
     prompt += '\nFICHAS TÉCNICAS DOS PRODUTOS RELACIONADOS (use para explicar o produto com conhecimento técnico):\n' +
       JSON.stringify(fichasRelevantes.map((p) => p.ficha), null, 2) + '\n'
   }
-
   // ===== MEMÓRIA: injeta exemplos de respostas boas (few-shot) =====
   if (exemplos.length > 0) {
     prompt += '\nExemplos de respostas que este vendedor avaliou como BOAS (use o MESMO estilo, formato e nível de detalhe):\n' +
       JSON.stringify(exemplos, null, 2) + '\n'
   }
-
   const res = await responderComGemini(prompt)
   if (res.ok) {
     registrarConsulta(sessao.id, perguntaTexto, res.texto)
@@ -962,12 +943,16 @@ handleUnico('insights:gerar', () => {
   const arquivados = new Set((dados.clientes || []).filter((c) => c.arquivado).map((c) => c.id))
   const notasRes = carregarNotas()
   const notas = notasRes.ok ? (notasRes.dados.notas || []) : []
+  // ===== NOVO: carrega os segmentos (mapeamento compartilhado) =====
+  const segRes = carregarSegmentos()
+  const segmentos = segRes.ok ? segRes.dados : null
   return gerarInsights({
     clientes: (dados.clientes || []).filter((c) => !c.arquivado),
     vendas: (dados.vendas || []).filter((v) => !arquivados.has(v.clienteId)),
     orcamentosPerdidos: dados.orcamentosPerdidos,
     vendedores: dados.vendedores || [],
     notas,
+    segmentos,   // ✅ NOVO
     estado
   })
 })
@@ -978,7 +963,19 @@ handleUnico('insights:marcar', (_e, { acao, chave }) => {
   salvarEstadoInsights(sessao.id, novo)
   return { ok: true, estado: novo }
 })
-
+// ===== NOVO: SEGMENTOS — mapeamento compartilhado de produtos =====
+handleUnico('segmentos:carregar', () => {
+  return carregarSegmentos()
+})
+handleUnico('segmentos:mapear', (_e, payload) => {
+  if (!sessao) return { ok: false, erro: 'Não autenticado' }
+  return mapearProdutoSegmento({
+    codigo: payload && payload.codigo,
+    descricao: payload && payload.descricao,
+    segmentoId: payload && payload.segmentoId,
+    usuario: sessao.nome
+  })
+})
 // ===== NOVO: itens de notas fiscais do cliente (mesma base da consulta IA) =====
 handleUnico('clientes:comprasNotas', (_e, clienteId) => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
@@ -1003,8 +1000,6 @@ handleUnico('clientes:comprasNotas', (_e, clienteId) => {
   }
   return { ok: true, itens }
 })
-
-
 // ===== INTELIGÊNCIA ARTIFICIAL — Gemini API =====
 async function listarModelosDisponiveis() {
   try {
@@ -1341,7 +1336,6 @@ handleUnico('app:reiniciarAtualizar', () => {
   autoUpdater.quitAndInstall()
   return { ok: true }
 })
-
 // ===== CORRIGIDO: busca a capa da revista e baixa como data URL =====
 handleUnico('promocoes:capa', async (_e, url) => {
   const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36'
@@ -1352,12 +1346,10 @@ handleUnico('promocoes:capa', async (_e, url) => {
     const m = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)
       || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i)
     if (!m || !m[1]) return { ok: false, erro: 'og:image não encontrado' }
-
     // 2) Resolve URL relativa contra a página (ex.: "/files/..." -> "https://heyzine.com/files/...")
     let capa = m[1]
     if (capa.startsWith('//')) capa = 'https:' + capa
     else if (capa.startsWith('/')) capa = new URL(capa, String(url)).href
-
     // 3) Baixa a imagem (com Referer para não ser bloqueada) e converte para data URL
     const imgRes = await fetch(capa, {
       headers: { 'User-Agent': UA, 'Referer': String(url), 'Accept': 'image/*' }
@@ -1370,8 +1362,106 @@ handleUnico('promocoes:capa', async (_e, url) => {
     return { ok: false, erro: (e && e.message) || 'Falha ao buscar a capa' }
   }
 })
-
-
+// ===== NOVO: versão do sistema (lida do package.json) =====
+handleUnico('app:versao', () => {
+  return { ok: true, versao: app.getVersion() }
+})
+// ===== NOVO: resumo mensal do mês anterior (aparece 1x por mês) =====
+handleUnico('resumo:mensal', (_e, vendedorId) => {
+  const dados = dadosParaPerfil()
+  const { clientes, vendas } = dados
+  const agora = new Date()
+  const mesAtual = agora.getMonth()
+  const anoAtual = agora.getFullYear()
+  // Mês anterior
+  const dAnt = new Date(anoAtual, mesAtual - 1, 1)
+  const mesAnt = dAnt.getMonth()
+  const anoAnt = dAnt.getFullYear()
+  // Mês atual (para comparação de rank)
+  const mesAtualStr = anoAtual + '-' + String(mesAtual + 1).padStart(2, '0')
+  const mesAntStr = anoAnt + '-' + String(mesAnt + 1).padStart(2, '0')
+  const ehDoMes = (data, mesStr) => String(data || '').startsWith(mesStr)
+  // Filtra carteira do vendedor (se não for admin)
+  const carteira = vendedorId
+    ? clientes.filter((c) => c.vendedorId === vendedorId)
+    : clientes
+  // Total vendido por cliente no mês anterior e no mês atual
+  const totalPorClienteMes = (mesStr) => {
+    const mapa = {}
+    for (const v of vendas) {
+      if (!ehDoMes(v.data, mesStr)) continue
+      const dono = clientes.find((c) => c.id === v.clienteId)
+      if (vendedorId && (!dono || dono.vendedorId !== vendedorId)) continue
+      mapa[v.clienteId] = (mapa[v.clienteId] || 0) +
+        Number(v.valorInsumos || 0) + Number(v.valorEquipamento || 0)
+    }
+    return mapa
+  }
+  const gastoMesAnt = totalPorClienteMes(mesAntStr)
+  const gastoMesAtual = totalPorClienteMes(mesAtualStr)
+  // Rank (posição) de cada cliente em cada mês
+  const rankDe = (mapa) => {
+    const r = Object.keys(mapa).sort((a, b) => mapa[b] - mapa[a])
+    const pos = {}
+    r.forEach((id, i) => { pos[id] = i + 1 })
+    return pos
+  }
+  const rankAnt = rankDe(gastoMesAnt)
+  const rankAtual = rankDe(gastoMesAtual)
+  // Clientes que subiram/caíram (comparando posição entre os 2 meses)
+  let subiram = 0, cairam = 0
+  const detalheRank = []
+  for (const id of Object.keys(rankAtual)) {
+    const antes = rankAnt[id]
+    const depois = rankAtual[id]
+    if (antes === undefined) continue // novo no mês atual
+    const diff = antes - depois
+    if (diff > 0) {
+      subiram++
+      detalheRank.push({ id, nome: nomeCliente(id), variacao: diff, tipo: 'subiu' })
+    } else if (diff < 0) {
+      cairam++
+      detalheRank.push({ id, nome: nomeCliente(id), variacao: -diff, tipo: 'caiu' })
+    }
+  }
+  // Clientes que voltaram a comprar / pararam de comprar
+  const comprouAnt = new Set(Object.keys(gastoMesAnt))
+  const comprouAtual = new Set(Object.keys(gastoMesAtual))
+  const infoCliente = (id) => {
+  const c = clientes.find((x) => x.id === id)
+  return { codigo: c ? c.codigo : '—', nome: c ? c.nome : 'Cliente' }
+}
+const voltaram = [...comprouAtual].filter((id) => !comprouAnt.has(id)).map(infoCliente)
+const pararam = [...comprouAnt].filter((id) => !comprouAtual.has(id)).map(infoCliente)
+  // Total vendido no mês anterior vs mês atual
+  const totalAnt = Object.values(gastoMesAnt).reduce((a, b) => a + b, 0)
+  const totalAtual = Object.values(gastoMesAtual).reduce((a, b) => a + b, 0)
+  const variacao = totalAnt > 0 ? Math.round(((totalAtual - totalAnt) / totalAnt) * 100) : null
+  // Cliente destaque do mês (maior crescimento absoluto entre os que compraram nos 2 meses)
+  let destaque = null
+  for (const id of Object.keys(gastoMesAtual)) {
+    if (!gastoMesAnt[id]) continue
+    const cresc = gastoMesAtual[id] - gastoMesAnt[id]
+    if (cresc > 0 && (!destaque || cresc > destaque.crescimento)) {
+      destaque = { id, nome: nomeCliente(id), crescimento: cresc }
+    }
+  }
+  function nomeCliente(id) {
+    const c = clientes.find((x) => x.id === id)
+    return c ? c.nome : 'Cliente'
+  }
+  return {
+    ok: true,
+    mesAntigo: mesAntStr,
+    mesAtual: mesAtualStr,
+    totalAnt, totalAtual, variacao,
+    subiram, cairam,
+    voltaram: voltaram.slice(0, 10),
+    pararam: pararam.slice(0, 10),
+    destaque,
+    detalheRank: detalheRank.slice(0, 10)
+  }
+})
 // --- Janela ---
 function createWindow() {
   const win = new BrowserWindow({
@@ -1406,7 +1496,6 @@ function createWindow() {
     win.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
-
 app.whenReady().then(() => {
 	  // ===== NOVO: permite o uso do microfone (reconhecimento de voz no Consultar) =====
   const { session } = require('electron')
@@ -1433,7 +1522,6 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
-
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })

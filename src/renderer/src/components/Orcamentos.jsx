@@ -379,6 +379,7 @@ export default function Orcamentos({ usuario }) {
               <option value="">Selecione o meio de envio</option>
               <option value="WhatsApp">WhatsApp</option>
               <option value="E-mail">E-mail</option>
+              <option value="Telefone">Telefone</option>
               <option value="Teams">Teams</option>
               <option value="Plataforma">Plataforma</option>
             </select>

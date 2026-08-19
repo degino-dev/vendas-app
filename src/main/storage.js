@@ -3,23 +3,19 @@ import { app } from 'electron'
 import { join, dirname } from 'path'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, readdirSync, statSync, unlinkSync } from 'fs'
 import bcrypt from 'bcryptjs'
-
 // ============================================================
 // CAMINHO FIXO DOS DADOS (rede)
 // ============================================================
 // Trave o caminho aqui. Todos os computadores usarão esta pasta.
 // Para trocar, edite apenas esta linha.
 var CAMINHO_FIXO = 'U:\\DADOS DO APP\\dados.json'
-
 var CONFIG_DIR = join(app.getPath('userData'), 'config')
 var CONFIG_FILE = join(CONFIG_DIR, 'config.json')
 var PADRAO_DIR = join(app.getPath('userData'), 'dados')
 var PADRAO_FILE = PADRAO_DIR + '\dados.json'
-
 // Retenção de backups (fixa conforme pedido)
 var RETER_VENDEDOR = 2
 var RETER_GERAIS = 2
-
 function lerCaminhoConfig() {
   // SEMPRE usa o caminho fixo da rede — ignora config.json
   return CAMINHO_FIXO
@@ -438,4 +434,88 @@ export function salvarEstadoInsights(id, estado) {
   } catch (err) {
     return { ok: false, erro: 'Sem permissao para gravar: ' + String(err) }
   }
+}
+// ============================================================
+// SEGMENTOS — mapeamento compartilhado de produtos (GLOBAL)
+// ============================================================
+// Fica na pasta comum (U:\DADOS DO APP\segmentos.json), como vendedores.json,
+// para que TODOS os vendedores compartilhem o mesmo mapeamento.
+function arquivoSegmentos() {
+  return join(pastaDados(), 'segmentos.json')
+}
+export function carregarSegmentos() {
+  var arquivo = arquivoSegmentos()
+  try {
+    if (!existsSync(arquivo)) {
+      return { ok: true, dados: { versao: 1, produtos: {}, aprendidas: {} } }
+    }
+    var dados = JSON.parse(readFileSync(arquivo, 'utf-8'))
+    return { ok: true, dados }
+  } catch (err) {
+    console.error('Erro ao ler segmentos:', err)
+    return { ok: false, erro: 'Erro ao ler segmentos.json: ' + String(err) }
+  }
+}
+export function salvarSegmentos(dados) {
+  var arquivo = arquivoSegmentos()
+  try {
+    garantirPastas(dirname(arquivo))
+    writeFileSync(arquivo, JSON.stringify(dados, null, 2), 'utf-8')
+    return { ok: true }
+  } catch (err) {
+    console.error('Erro ao salvar segmentos:', err)
+    return { ok: false, erro: 'Sem permissao para gravar segmentos: ' + String(err) }
+  }
+}
+// Extrai palavras-chave de uma descrição de produto (para aprendizado)
+function extrairPalavrasSegmento(descricao) {
+  var texto = String(descricao || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  var GENERICOS = new Set(['com', 'para', 'cada', 'caixa', 'premium', 'ml', 'mm', 'cm', 'cx', 'pct', 'und', 'un'])
+  var termos = texto.split(' ').filter(function (t) {
+    return t.length >= 4 && !GENERICOS.has(t) && !/^\d/.test(t)
+  })
+  var palavras = termos.slice()
+  for (var i = 0; i < termos.length - 1; i++) {
+    palavras.push(termos[i] + ' ' + termos[i + 1])
+  }
+  return palavras
+}
+// Mapeia um produto para um segmento e aprende palavras-chave novas
+export function mapearProdutoSegmento(_ref) {
+  var codigo = _ref.codigo
+  var descricao = _ref.descricao
+  var segmentoId = _ref.segmentoId
+  var usuario = _ref.usuario
+  var res = carregarSegmentos()
+  if (!res.ok) return res
+  var dados = res.dados
+  dados.versao = dados.versao || 1
+  dados.produtos = dados.produtos || {}
+  dados.aprendidas = dados.aprendidas || {}
+  // 1) Salva o mapeamento do produto
+  dados.produtos[String(codigo)] = {
+    codigo: String(codigo),
+    descricao: descricao || '',
+    segmentoId: segmentoId || '',
+    mapeadoPor: usuario || '',
+    data: new Date().toISOString().slice(0, 10)
+  }
+  // 2) Aprende palavras-chave do produto mapeado (com contador de confiança)
+  if (segmentoId && descricao) {
+    dados.aprendidas[segmentoId] = dados.aprendidas[segmentoId] || {}
+    var palavras = extrairPalavrasSegmento(descricao)
+    for (var i = 0; i < palavras.length; i++) {
+      var p = palavras[i]
+      dados.aprendidas[segmentoId][p] = (dados.aprendidas[segmentoId][p] || 0) + 1
+    }
+  }
+  var salvo = salvarSegmentos(dados)
+  if (!salvo.ok) return salvo
+  return { ok: true, dados: dados }
 }
