@@ -30,6 +30,11 @@ export default function Orcamentos({ usuario }) {
   const [filtroAno, setFiltroAno] = useState(anoAtual)
   const [filtroMes, setFiltroMes] = useState(mesAtual)
   const [filtroVendedor, setFiltroVendedor] = useState('todos')
+  // ===== NOVO: filtro por data específica e por cliente =====
+  const [filtroData, setFiltroData] = useState('')
+  const [filtroCliente, setFiltroCliente] = useState('todos')
+  // ===== NOVO: busca por nome ou ID do cliente no filtro =====
+  const [buscaFiltroCliente, setBuscaFiltroCliente] = useState('')
   const [form, setForm] = useState(formVazio())
   const [editando, setEditando] = useState(null)
   const [mostrarSugestoes, setMostrarSugestoes] = useState(false)
@@ -38,7 +43,6 @@ export default function Orcamentos({ usuario }) {
   const [recusando, setRecusando] = useState(null)
   const [recusaForm, setRecusaForm] = useState({ motivo: '', concorrente: '', observacao: '' })
   // Modal de aprovação (novos números de pedido + valor aprovado)
-  // ===== ALTERADO: novo campo valorAprovado =====
   const [aprovando, setAprovando] = useState(null)
   const [aprovacaoForm, setAprovacaoForm] = useState({ pedidoInsumos: '', pedidoEquipamento: '', valorAprovado: '' })
   // ===== feedback de sucesso (toast) =====
@@ -88,6 +92,23 @@ export default function Orcamentos({ usuario }) {
     if (filtroAno === 'todos' || filtroAno === anoAtual) set.add(mesAtual)
     return [...set].sort((a, b) => a - b)
   }, [orcamentos, filtroAno, anoAtual, mesAtual])
+  // ===== ALTERADO: só clientes que JÁ têm orçamento (para o filtro) =====
+  const clientesComOrcamento = useMemo(() => {
+    const idsComOrcamento = new Set(orcamentos.map((o) => o.clienteId))
+    return clientes
+      .filter((c) => idsComOrcamento.has(c.id))
+      .sort((a, b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'))
+  }, [orcamentos, clientes])
+  // ===== NOVO: clientes com orçamento filtrados pela busca (nome ou ID) =====
+  const clientesFiltroVisiveis = useMemo(() => {
+    const b = buscaFiltroCliente.trim().toLowerCase()
+    if (!b) return clientesComOrcamento
+    return clientesComOrcamento.filter((c) => {
+      const nome = String(c.nome || '').toLowerCase()
+      const cod = String(c.codigo)
+      return nome.includes(b) || cod === b || cod.startsWith(b)
+    })
+  }, [clientesComOrcamento, buscaFiltroCliente])
   const orcamentosFiltrados = useMemo(() => {
     let lista = orcamentos
     if (filtroAno !== 'todos') {
@@ -96,11 +117,19 @@ export default function Orcamentos({ usuario }) {
     if (filtroMes !== 'todos') {
       lista = lista.filter((o) => Number((o.data || '').slice(5, 7)) === filtroMes)
     }
+    // ===== NOVO: filtro por data específica =====
+    if (filtroData) {
+      lista = lista.filter((o) => (o.data || '') === filtroData)
+    }
+    // ===== NOVO: filtro por cliente =====
+    if (filtroCliente !== 'todos') {
+      lista = lista.filter((o) => o.clienteId === filtroCliente)
+    }
     if (filtroVendedor !== 'todos') {
       lista = lista.filter((o) => o.vendedorId === filtroVendedor)
     }
     return lista
-  }, [orcamentos, filtroAno, filtroMes, filtroVendedor])
+  }, [orcamentos, filtroAno, filtroMes, filtroData, filtroCliente, filtroVendedor])
   const ordenados = useMemo(() => {
     return [...orcamentosFiltrados].sort((a, b) => {
       const cmp = (b.data || '').localeCompare(a.data || '')
@@ -194,8 +223,6 @@ export default function Orcamentos({ usuario }) {
       }
     }
   }
-  // Abre o modal de aprovação pedindo o(s) novo(s) número(s) de pedido
-  // ===== ALTERADO: reseta também o valorAprovado =====
   function abrirAprovacao(o) {
     setAprovando(o)
     setAprovacaoForm({ pedidoInsumos: '', pedidoEquipamento: '', valorAprovado: '' })
@@ -206,12 +233,10 @@ export default function Orcamentos({ usuario }) {
     if (!aprovando) return
     const pi = aprovacaoForm.pedidoInsumos.trim()
     const pe = aprovacaoForm.pedidoEquipamento.trim()
-    // Pelo menos um dos dois precisa ser preenchido
     if (!pi && !pe) {
       setErro('Informe ao menos o Ped. Insumos ou o Ped. Equip. para aprovar.')
       return
     }
-    // ===== NOVO: converte o valor aprovado (máscara) para número; null = mantém o orçado =====
     const valorAprovadoNum = aprovacaoForm.valorAprovado ? parseMoeda(aprovacaoForm.valorAprovado) : null
     const res = await window.api.aprovarOrcamento(aprovando.id, {
       pedidoInsumos: pi,
@@ -227,7 +252,6 @@ export default function Orcamentos({ usuario }) {
                 status: 'aprovado',
                 pedidoFinalInsumos: pi,
                 pedidoFinalEquipamento: pe,
-                // ===== NOVO: guarda o valor aprovado na lista local =====
                 valorAprovado: valorAprovadoNum
               }
             : x
@@ -315,6 +339,51 @@ export default function Orcamentos({ usuario }) {
             ))}
           </select>
         </label>
+        {/* ===== NOVO: filtro por data específica ===== */}
+        <label>
+          Data
+          <input
+            type="date"
+            value={filtroData}
+            onChange={(e) => setFiltroData(e.target.value)}
+            title="Filtrar por um dia específico"
+          />
+        </label>
+        {/* ===== ALTERADO: filtro de cliente com busca por nome/ID + só quem tem orçamento ===== */}
+        <label className="filtro-cliente-busca">
+          Cliente
+          <div className="cliente-busca">
+            <input
+              value={filtroCliente !== 'todos' ? (clientePorId(filtroCliente)?.nome || '') : buscaFiltroCliente}
+              onChange={(e) => {
+                setFiltroCliente('todos')
+                setBuscaFiltroCliente(e.target.value)
+              }}
+              onFocus={() => setBuscaFiltroCliente(buscaFiltroCliente)}
+              placeholder="Buscar por nome ou ID..."
+            />
+            {filtroCliente !== 'todos' && (
+              <button type="button" className="btn-limpar" onClick={() => { setFiltroCliente('todos'); setBuscaFiltroCliente('') }}>✕</button>
+            )}
+            {filtroCliente === 'todos' && buscaFiltroCliente && clientesFiltroVisiveis.length > 0 && (
+              <div className="sugestoes">
+                {clientesFiltroVisiveis.map((c) => (
+                  <button
+                    type="button"
+                    key={c.id}
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                      setFiltroCliente(c.id)
+                      setBuscaFiltroCliente('')
+                    }}
+                  >
+                    <span>#{c.codigo} {c.nome}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </label>
         {usuario.admin && (
           <label>
             Vendedor
@@ -325,6 +394,23 @@ export default function Orcamentos({ usuario }) {
               ))}
             </select>
           </label>
+        )}
+        {/* ===== NOVO: botão para limpar todos os filtros ===== */}
+        {(filtroData || filtroCliente !== 'todos' || filtroAno !== 'todos' || filtroMes !== 'todos' || filtroVendedor !== 'todos') && (
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => {
+              setFiltroAno('todos')
+              setFiltroMes('todos')
+              setFiltroData('')
+              setFiltroCliente('todos')
+              setBuscaFiltroCliente('')
+              setFiltroVendedor('todos')
+            }}
+          >
+            ✕ Limpar filtros
+          </button>
         )}
       </div>
       {/* Formulário */}
@@ -493,17 +579,6 @@ export default function Orcamentos({ usuario }) {
                 const vend = vendedorPorId(o.vendedorId)
                 const status = o.status || 'aguardando'
                 const st = STATUS_META[status] || STATUS_META.aguardando
-                // Infos extras de aprovação/recusa (movidas para a observação)
-                const infosExtras = []
-                if (o.status === 'aprovado') {
-                  if (o.pedidoFinalInsumos) infosExtras.push('Ped. Insumos: ' + o.pedidoFinalInsumos)
-                  if (o.pedidoFinalEquipamento) infosExtras.push('Ped. Equip.: ' + o.pedidoFinalEquipamento)
-                }
-                if (o.status === 'recusado') {
-                  if (o.motivo) infosExtras.push('Motivo: ' + o.motivo)
-                  if (o.concorrente) infosExtras.push('Concorrente: ' + o.concorrente)
-                  if (o.observacaoRecusa) infosExtras.push('Obs: ' + o.observacaoRecusa)
-                }
                 return (
                   <tr key={o.id} className={'orc-status-' + status}>
                     <td className="rank">{cli ? cli.codigo : '-'}</td>
@@ -522,7 +597,6 @@ export default function Orcamentos({ usuario }) {
                       <span className="venda-valor">{fmtValor(o.valorEquipamento)}</span>
                     </td>
                     <td>{o.frete ? (String(o.frete).includes('%') ? o.frete : fmtValor(String(o.frete).replace(',', '.'))) : '—'}</td>
-                    {/* ===== ALTERADO: mostra Orçado vs Aprovado quando houver valor aprovado ===== */}
                     <td className="valor-meta">
                       {o.status === 'aprovado' && o.valorAprovado != null ? (
                         <>
