@@ -905,7 +905,7 @@ handleUnico('orcamentos:aprovar', (_e, id, info) => {
     pedidoEquipamento: pedidoEquipamento,
     valorEquipamento: valorEquipamentoVenda,
     frete: orc.frete || 0,
-    data: orc.data || new Date().toISOString().slice(0, 10),
+    data: new Date().toISOString().slice(0, 10),   // ===== ALTERADO: data da aprovação (hoje) =====
     observacao: orc.observacao || ''
   })
   orc.status = 'aprovado'

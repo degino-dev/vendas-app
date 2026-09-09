@@ -5,8 +5,8 @@ import { useEffect, useState } from 'react'
 // troque o título e a URL pelos links novos da Heyzine
 // ============================================================
 const PROMOCOES = [
-  { id: 'promo-insumos', titulo: '📦 Promoção Linha Diag', url: 'https://heyzine.com/flip-book/f72ad085aa.html' },
-  { id: 'promo-equipamentos', titulo: '🖥️ Promoção Linha Vet', url: 'https://heyzine.com/flip-book/b73c21b98b.html' }
+  { id: 'promo-insumos', titulo: '📦 Promoção Linha Diag', url: 'https://heyzine.com/flip-book/0ab883859e.html' },
+  { id: 'promo-equipamentos', titulo: '🖥️ Promoção Linha Vet', url: 'https://heyzine.com/flip-book/0fbdad883f.html' }
 ]
 
 // ===== DOBRO da versão ultra-compacta: miniatura 128×168, fontes e botões maiores =====
