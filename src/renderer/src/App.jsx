@@ -243,7 +243,6 @@ function App() {
         {aba === 'dashboard' && <Dashboard usuario={usuario} />}
         {aba === 'consultar' && <Consultar usuario={usuario} />}
         {aba === 'insights' && <Insights usuario={usuario} />}
-		{aba === 'promocoes' && <Promocoes />}
       </main>
     </div>
   )
