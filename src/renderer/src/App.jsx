@@ -9,7 +9,6 @@ import PainelGerente from './components/PainelGerente'
 import GestaoVendedores from './components/GestaoVendedores'
 import Insights from './components/Insights'
 import Consultar from './components/Consultar'
-
 // ===== NOVO: modal de resumo mensal (aparece 1x por mês) =====
 function ResumoMensal({ usuario, onFechar }) {
   const [resumo, setResumo] = useState(null)
@@ -62,7 +61,7 @@ function ResumoMensal({ usuario, onFechar }) {
             🏆 <strong>Cliente destaque:</strong> {resumo.destaque.nome} — cresceu {fmtMoeda(resumo.destaque.crescimento)} no mês!
           </div>
         )}
-                       <div className="resumo-listas">
+        <div className="resumo-listas">
           {resumo.voltaram.length > 0 && (
             <div>
               <h4>🔄 Voltaram a comprar</h4>
@@ -91,7 +90,6 @@ function ResumoMensal({ usuario, onFechar }) {
     </div>
   )
 }
-
 function App() {
   const [usuario, setUsuario] = useState(null)
   // ===== ALTERADO: aba padrão vira a Home =====
