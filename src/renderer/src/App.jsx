@@ -9,7 +9,6 @@ import PainelGerente from './components/PainelGerente'
 import GestaoVendedores from './components/GestaoVendedores'
 import Insights from './components/Insights'
 import Consultar from './components/Consultar'
-import Promocoes from './components/Promocoes'
 
 // ===== NOVO: modal de resumo mensal (aparece 1x por mês) =====
 function ResumoMensal({ usuario, onFechar }) {
@@ -146,7 +145,6 @@ function App() {
         { id: 'orcamentos', label: 'Orçamentos' },
         { id: 'consultar', label: '🔍 Consultar' },
         { id: 'insights', label: '💡 Dicas' },
-		{ id: 'promocoes', label: '📰 Promoções' },
       ]
     : [
         // ===== ALTERADO: Home é a primeira aba do vendedor =====
@@ -157,7 +155,6 @@ function App() {
         { id: 'dashboard', label: '📊 Análise' },
         { id: 'consultar', label: '🔍 Consultar' },
         { id: 'insights', label: '💡 Dicas' },
-		{ id: 'promocoes', label: '📰 Promoções' },
       ]
   async function salvarCaminho(e) {
     e.preventDefault()
