@@ -69,6 +69,10 @@ const estiloPadrao = `
   .badge-parou { background: #fee2e2; color: #b91c1c; }
   .badge-comecou { background: #dbeafe; color: #1d4ed8; }
   .badge-sempre { background: #dcfce7; color: #15803d; }
+  /* ===== NOVO: marca / validade nas listas de produtos ===== */
+  .top-marca { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 999px; background: #e0e7ff; color: #4338ca; font-size: 11px; font-weight: 700; }
+  .top-lote { margin-left: 6px; font-size: 11px; color: #64748b; }
+  .top-validade { margin-left: 6px; font-size: 11px; color: #b45309; }
 `
 const fmtMesAno = (ym) => {
   if (!ym) return ''
@@ -486,6 +490,7 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
       )}
       {aba === 'produtos' && (
         <>
+          <style>{estiloPadrao}</style>
           <div className="cliente-secao">
             <div className="top-filtro-ano">
               <label>Período das notas:</label>
@@ -510,7 +515,13 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
                 {maisComprados.map((p, i) => (
                   <li key={p.codigo}>
                     <span className="top-pos">{i + 1}</span>
-                    <span className="top-desc">{p.descricao}</span>
+                    <span className="top-desc">
+                      {p.descricao}
+                      {/* ===== NOVO: marca / lote / validade da nota (mostra quando houver) ===== */}
+                      {p.marca && <span className="top-marca">{p.marca}</span>}
+                      {p.lote && <span className="top-lote">Lote: {p.lote}</span>}
+                      {p.validade && <span className="top-validade">Val.: {fmtData(p.validade)}</span>}
+                    </span>
                     <span className="top-qtd">{p.quantidade} {p.unidade}</span>
                     <span className="top-valor">{fmtMoeda(p.valor)}</span>
                   </li>
@@ -531,7 +542,13 @@ export default function ClienteDetalhe({ clienteId, onVoltar }) {
                 {menosComprados.map((p, i) => (
                   <li key={p.codigo}>
                     <span className="top-pos">{i + 1}</span>
-                    <span className="top-desc">{p.descricao}</span>
+                    <span className="top-desc">
+                      {p.descricao}
+                      {/* ===== NOVO: marca / lote / validade da nota (mostra quando houver) ===== */}
+                      {p.marca && <span className="top-marca">{p.marca}</span>}
+                      {p.lote && <span className="top-lote">Lote: {p.lote}</span>}
+                      {p.validade && <span className="top-validade">Val.: {fmtData(p.validade)}</span>}
+                    </span>
                     <span className="top-qtd">{p.aparicoes} aparições · {p.quantidade} {p.unidade}</span>
                     <span className="top-valor">{fmtMoeda(p.valor)}</span>
                   </li>

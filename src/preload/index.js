@@ -26,7 +26,7 @@ contextBridge.exposeInMainWorld('api', {
   deletarOrcamento: (id) => ipcRenderer.invoke('orcamentos:deletar', id),
   gerarInsights: () => ipcRenderer.invoke('insights:gerar'),
   marcarInsight: (dados) => ipcRenderer.invoke('insights:marcar', dados),
-  // ===== NOVO: segmentos (mapeamento compartilhado de produtos) =====
+  // ===== segmentos (mapeamento compartilhado de produtos) =====
   segmentosCarregar: () => ipcRenderer.invoke('segmentos:carregar'),
   segmentosMapear: (payload) => ipcRenderer.invoke('segmentos:mapear', payload),
   analisarComIA: () => ipcRenderer.invoke('ia:analisar'),
@@ -51,7 +51,7 @@ contextBridge.exposeInMainWorld('api', {
   historicoCliente: (id) => ipcRenderer.invoke('historico:listar', id),
   salvarHistorico: (id, item) => ipcRenderer.invoke('historico:salvar', id, item),
   padraoCliente: (codigo, meses) => ipcRenderer.invoke('notas:padraoCliente', codigo, meses),
-  notasTopCliente: (codigo, ano) => ipcRenderer.invoke('notas:topCliente', codigo, ano), 
+  notasTopCliente: (codigo, ano) => ipcRenderer.invoke('notas:topCliente', codigo, ano),
   notasAnos: () => ipcRenderer.invoke('notas:anos'),
   consultarIA: (pergunta) => ipcRenderer.invoke('ia:consultar', pergunta),
   avaliarIA: (dados) => ipcRenderer.invoke('ia:avaliar', dados),
@@ -62,4 +62,15 @@ contextBridge.exposeInMainWorld('api', {
   reiniciarParaAtualizar: () => ipcRenderer.invoke('app:reiniciarAtualizar'),
   resumoMensal: (vendedorId) => ipcRenderer.invoke('resumo:mensal', vendedorId),
   versao: () => ipcRenderer.invoke('app:versao'),
+  // ===== produtos / comparativo de preços =====
+  listarProdutos: (ano) => ipcRenderer.invoke('produtos:listar', ano),
+  produtoDetalhe: (codigo, ano) => ipcRenderer.invoke('produtos:detalhe', codigo, ano),
+  salvarConcorrente: (payload) => ipcRenderer.invoke('concorrentes:salvar', payload),
+  deletarConcorrente: (codigo, id) => ipcRenderer.invoke('concorrentes:deletar', codigo, id),
+  abrirExterno: (url) => ipcRenderer.invoke('externo:abrir', url),
+  // ===== NOVO: sites de cota + cotação automática =====
+  listarSitesCota: () => ipcRenderer.invoke('sitescota:listar'),
+  salvarSitesCota: (sites) => ipcRenderer.invoke('sitescota:salvar', sites),
+  cotarProduto: (termo) => ipcRenderer.invoke('cotacoes:buscar', termo),
+  abrirPdfNota: (numeroNota) => ipcRenderer.invoke('notas:abrirPdf', numeroNota),
 })

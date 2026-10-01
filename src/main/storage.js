@@ -519,3 +519,150 @@ export function mapearProdutoSegmento(_ref) {
   if (!salvo.ok) return salvo
   return { ok: true, dados: dados }
 }
+
+// ============================================================
+// CONCORRENTES — preços de concorrentes por produto (GLOBAL)
+// ============================================================
+// Fica na pasta comum (U:\DADOS DO APP\concorrentes.json), como
+// segmentos.json, para que TODOS os vendedores compartilhem.
+function arquivoConcorrentes() {
+  return join(pastaDados(), 'concorrentes.json')
+}
+export function carregarConcorrentes() {
+  var arquivo = arquivoConcorrentes()
+  try {
+    if (!existsSync(arquivo)) {
+      return { ok: true, dados: { versao: 1, produtos: {} } }
+    }
+    var dados = JSON.parse(readFileSync(arquivo, 'utf-8'))
+    return { ok: true, dados: dados }
+  } catch (err) {
+    console.error('Erro ao ler concorrentes:', err)
+    return { ok: false, erro: 'Erro ao ler concorrentes.json: ' + String(err) }
+  }
+}
+export function salvarConcorrentes(dados) {
+  var arquivo = arquivoConcorrentes()
+  try {
+    garantirPastas(dirname(arquivo))
+    writeFileSync(arquivo, JSON.stringify(dados, null, 2), 'utf-8')
+    return { ok: true }
+  } catch (err) {
+    console.error('Erro ao salvar concorrentes:', err)
+    return { ok: false, erro: 'Sem permissao para gravar concorrentes: ' + String(err) }
+  }
+}
+// Adiciona um registro de preço de concorrente para um produto (por código)
+export function adicionarConcorrente(_ref) {
+  var codigo = _ref.codigo
+  var site = _ref.site
+  var valor = _ref.valor
+  var data = _ref.data
+  var link = _ref.link
+  var observacao = _ref.observacao
+  var usuario = _ref.usuario
+  var res = carregarConcorrentes()
+  if (!res.ok) return res
+  var dados = res.dados
+  dados.versao = dados.versao || 1
+  dados.produtos = dados.produtos || {}
+  var chave = String(codigo || '').trim()
+  if (!chave) return { ok: false, erro: 'Produto sem codigo.' }
+  dados.produtos[chave] = dados.produtos[chave] || []
+  dados.produtos[chave].push({
+    id: chave + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+    site: site || '',
+    valor: Number(valor) || 0,
+    data: data || new Date().toISOString().slice(0, 10),
+    link: link || '',
+    observacao: observacao || '',
+    usuario: usuario || '',
+    criadoEm: new Date().toISOString()
+  })
+  var salvo = salvarConcorrentes(dados)
+  if (!salvo.ok) return salvo
+  return { ok: true, dados: dados }
+}
+// Remove um registro de concorrente de um produto
+export function removerConcorrente(codigo, id) {
+  var res = carregarConcorrentes()
+  if (!res.ok) return res
+  var dados = res.dados
+  var chave = String(codigo || '').trim()
+  var lista = (dados.produtos && dados.produtos[chave]) || []
+  dados.produtos[chave] = lista.filter(function (c) { return c.id !== id })
+  var salvo = salvarConcorrentes(dados)
+  if (!salvo.ok) return salvo
+  return { ok: true, dados: dados }
+}
+
+// ============================================================
+// MARCA DO FORNECEDOR — por produto (GLOBAL, no concorrentes.json)
+// ============================================================
+// A marca fica no MESMO arquivo compartilhado (concorrentes.json),
+// em um mapa separado "marcas", para não misturar com os preços.
+export function carregarMarcaProduto(codigo) {
+  var res = carregarConcorrentes()
+  if (!res.ok) return { ok: false, erro: res.erro }
+  var dados = res.dados
+  var chave = String(codigo || '').trim()
+  return { ok: true, marca: (dados.marcas && dados.marcas[chave] && dados.marcas[chave].marca) || '' }
+}
+export function salvarMarcaProduto(_ref) {
+  var codigo = _ref.codigo
+  var marca = _ref.marca
+  var usuario = _ref.usuario
+  var res = carregarConcorrentes()
+  if (!res.ok) return res
+  var dados = res.dados
+  dados.versao = dados.versao || 1
+  dados.marcas = dados.marcas || {}
+  var chave = String(codigo || '').trim()
+  if (!chave) return { ok: false, erro: 'Produto sem codigo.' }
+  dados.marcas[chave] = {
+    marca: String(marca || '').trim(),
+    atualizadoPor: usuario || '',
+    data: new Date().toISOString().slice(0, 10)
+  }
+  var salvo = salvarConcorrentes(dados)
+  if (!salvo.ok) return salvo
+  return { ok: true, dados: dados }
+}
+
+// ============================================================
+// SITES DE COTA — sites usados na cotação automática de preços (GLOBAL)
+// ============================================================
+// Fica no MESMO arquivo compartilhado (concorrentes.json), no campo "sites",
+// para que TODOS os vendedores usem os mesmos sites de cota.
+function sitesCotaPadrao() {
+  return [
+    {
+      id: 'centerlab',
+      nome: 'Centerlab',
+      dominio: 'www.centerlab.com',
+      tipo: 'vtex',        // busca automática via API de catálogo VTEX (retorna o valor)
+      habilitado: true
+    }
+  ]
+}
+export function carregarSitesCota() {
+  var res = carregarConcorrentes()
+  if (!res.ok) return res
+  var dados = res.dados
+  var sites = Array.isArray(dados.sites) && dados.sites.length > 0
+    ? dados.sites
+    : sitesCotaPadrao()
+  return { ok: true, sites: sites }
+}
+export function salvarSitesCota(sites) {
+  var res = carregarConcorrentes()
+  if (!res.ok) return res
+  var dados = res.dados
+  dados.versao = dados.versao || 1
+  dados.sites = Array.isArray(sites) && sites.length > 0
+    ? sites
+    : sitesCotaPadrao()
+  var salvo = salvarConcorrentes(dados)
+  if (!salvo.ok) return salvo
+  return { ok: true, sites: dados.sites }
+}

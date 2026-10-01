@@ -2,7 +2,7 @@
 require('dotenv').config()
 import { app, shell, BrowserWindow, ipcMain, nativeTheme, dialog } from 'electron'
 import { join } from 'path'
-import { readFileSync, existsSync } from 'fs'
+import { existsSync, statSync, readFileSync } from 'fs'
 import bcrypt from 'bcryptjs'
 import { randomUUID } from 'crypto'
 import {
@@ -15,8 +15,10 @@ import {
   listarBackups, listarBackupsVendedor, listarBackupsGerais,
   restaurarBackupVendedor, restaurarBackupGeral,
   carregarChaveIA, salvarChaveIA,
-  // ===== NOVO: segmentos (mapeamento compartilhado de produtos) =====
-  carregarSegmentos, mapearProdutoSegmento
+ // ===== adicionado: produtos / concorrentes / cotação =====
+  carregarSegmentos, mapearProdutoSegmento,
+  carregarConcorrentes, adicionarConcorrente, removerConcorrente,
+  carregarSitesCota, salvarSitesCota
 } from './storage'
 import { gerarInsights, atualizarEstado, gerarEstatisticasCliente } from './insights'
 import { autoUpdater } from 'electron-updater'
@@ -32,9 +34,7 @@ function handleUnico(canal, fn) {
   canaisRegistrados.add(canal)
   ipcMain.handle(canal, fn)
 }
-// ===== NOTAS FISCAIS (notas.json) =====
-let cacheNotas = null
-let cacheNotasCarregadoEm = null
+
 // Extrai o PRIMEIRO bloco JSON completo (ignora conteúdo duplicado depois)
 // Usa charCodeAt para evitar barras invertidas que quebram ao colar
 function extrairPrimeiroJSON(raw) {
@@ -61,27 +61,75 @@ function extrairPrimeiroJSON(raw) {
   }
   return null
 }
+let cacheNotas = null
+let cacheNotasMtime = 0
+
 function carregarNotas() {
   const caminho = 'U:/DADOS DO APP/notas.json'
   if (!existsSync(caminho)) return { ok: false, erro: 'notas.json não encontrado em U:/DADOS DO APP' }
-  if (cacheNotas && cacheNotasCarregadoEm && Date.now() - cacheNotasCarregadoEm < 300000) {
-    return { ok: true, dados: cacheNotas }
-  }
   try {
-    let raw = readFileSync(caminho, 'utf-8')
-    raw = raw.replace(/\/\*[\s\S]*?\*\//g, '')
-    raw = raw.replace(/,\s*([}\]])/g, '$1')
-    const trecho = extrairPrimeiroJSON(raw)
-    if (!trecho) return { ok: false, erro: 'Nenhum JSON válido encontrado em notas.json' }
-    const parseado = JSON.parse(trecho)
-    cacheNotas = Array.isArray(parseado) ? { notas: parseado } : parseado
-    cacheNotasCarregadoEm = Date.now()
-    console.log('notas.json carregado:', (cacheNotas.notas || []).length, 'notas')
-    return { ok: true, dados: cacheNotas }
-  } catch (err) {
-    return { ok: false, erro: 'Erro ao ler notas.json: ' + err.message }
+    const stat = statSync(caminho)
+    if (cacheNotas && cacheNotasMtime === stat.mtimeMs) {
+      return { ok: true, dados: cacheNotas }
+    }
+    const dados = JSON.parse(readFileSync(caminho, 'utf8'))
+    cacheNotas = dados
+    cacheNotasMtime = stat.mtimeMs
+    let totalProd = 0
+    let comMarca = 0
+    const marcas4197 = []
+    for (const n of (dados.notas || [])) {
+      for (const p of (n.produtos || [])) {
+        totalProd++
+        const m = String((p && p.marca) || '').trim()
+        if (m) comMarca++
+        if (String((p && p.codigo) || '').trim() === '4197') marcas4197.push('"' + m + '"')
+      }
+    }
+    console.log('[notas] ARQUIVO:', caminho)
+    console.log('[notas] tamanho:', stat.size, 'bytes | modificado:', stat.mtime.toISOString())
+    console.log('[notas] produtos lidos:', totalProd, '| com marca:', comMarca)
+    console.log('[notas] marcas do 4197 (' + marcas4197.length + ' ocorrencias):', marcas4197.slice(0, 30).join(', ') || 'nenhuma')
+    return { ok: true, dados }
+  } catch (e) {
+    return { ok: false, erro: 'Erro ao ler notas.json: ' + e.message }
   }
 }
+// ===== Abrir PDF da nota (NFE-{numero}.pdf) na pasta fixa =====
+const PASTA_NOTAS = 'P:\\NOTAS SALVAS AUTO.- DECIO CAMARGO LTDA'
+
+handleUnico('notas:abrirPdf', (_e, numeroNota) => {
+  const numero = String(numeroNota || '').trim()
+  if (!numero) return { ok: false, erro: 'Número da nota vazio.' }
+  const fs = require('fs')
+  const path = require('path')
+  const { shell } = require('electron')
+
+  // Padrões de nome possíveis: NFE-99550.pdf, NFE-99550 (sem ext), 99550.pdf
+  const candidatos = [
+    'NFE-' + numero + '.pdf',
+    'NFE-' + numero,
+    numero + '.pdf'
+  ]
+  let encontrado = null
+  for (const nome of candidatos) {
+    const caminho = path.join(PASTA_NOTAS, nome)
+    try {
+      if (fs.existsSync(caminho)) { encontrado = caminho; break }
+    } catch (e) { /* ignora */ }
+  }
+
+  if (encontrado) {
+    // Abre direto no visualizador padrão do Windows
+    shell.openPath(encontrado)
+    return { ok: true, caminho: encontrado }
+  }
+
+  // Não achou: abre a pasta para o vendedor procurar manualmente
+  shell.openPath(PASTA_NOTAS)
+  return { ok: false, erro: 'PDF não encontrado. Pasta aberta para busca manual.', caminho: PASTA_NOTAS }
+})
+
 handleUnico('notas:topCliente', (_e, codigoCliente, ano) => {
   const res = carregarNotas()
   if (!res.ok) return res
@@ -99,6 +147,7 @@ handleUnico('notas:topCliente', (_e, codigoCliente, ano) => {
   }
   const agregado = {}
   for (const nota of notasDoCliente) {
+    const dataNota = String(nota.data || nota.emissao || nota.dataEmissao || '')
     for (const p of nota.produtos || []) {
       if (!p || !p.codigo) continue
       if (!agregado[p.codigo]) {
@@ -108,12 +157,25 @@ handleUnico('notas:topCliente', (_e, codigoCliente, ano) => {
           unidade: p.unidade,
           quantidade: 0,
           valor: 0,
-          aparicoes: 0
+          aparicoes: 0,
+          // ===== NOVO: dados da nota =====
+          marca: p.marca || '',
+          lote: p.lote || '',
+          validade: p.validade || '',
+          ultimaData: ''
         }
       }
-      agregado[p.codigo].quantidade += Number(p.quantidade) || 0
-      agregado[p.codigo].valor += Number(p.valor_total) || 0
-      agregado[p.codigo].aparicoes += 1
+      const item = agregado[p.codigo]
+      item.quantidade += Number(p.quantidade) || 0
+      item.valor += Number(p.valor_total) || 0
+      item.aparicoes += 1
+      // ===== NOVO: marca/lote/validade da nota mais recente =====
+      if (dataNota && dataNota >= item.ultimaData) {
+        item.ultimaData = dataNota
+        if (p.marca) item.marca = p.marca
+        if (p.lote) item.lote = p.lote
+        if (p.validade) item.validade = p.validade
+      }
     }
   }
   const lista = Object.values(agregado)
@@ -274,7 +336,6 @@ function buscarProdutosPorTermos(notas, termos, codigosPermitidos) {
     const cliente = nota.cliente || {}
     const codCliente = String(cliente.codigo || '').trim()
     if (!codCliente) continue
-    // Filtra pelas notas SOMENTE dos clientes da carteira do vendedor logado
     if (codigosPermitidos && !codigosPermitidos.has(codCliente)) continue
     const dataNota = nota.data || nota.emissao || nota.dataEmissao || ''
     for (const p of nota.produtos || []) {
@@ -291,6 +352,10 @@ function buscarProdutosPorTermos(notas, termos, codigosPermitidos) {
           produtoCodigo: p.codigo,
           produtoDescricao: p.descricao || '',
           unidade: p.unidade || '',
+          // ===== NOVO: dados da nota =====
+          marca: p.marca || '',
+          lote: p.lote || '',
+          validade: p.validade || '',
           quantidade: 0,
           valor: 0,
           numNotas: 0,
@@ -303,6 +368,12 @@ function buscarProdutosPorTermos(notas, termos, codigosPermitidos) {
       item.valor += Number(p.valor_total) || 0
       item.numNotas += 1
       if (dataNota && dataNota > item.ultimaData) item.ultimaData = dataNota
+      // ===== NOVO: marca/lote/validade da nota mais recente =====
+      if (dataNota && dataNota >= item.ultimaData) {
+        if (p.marca) item.marca = p.marca
+        if (p.lote) item.lote = p.lote
+        if (p.validade) item.validade = p.validade
+      }
     }
   }
   return lista
@@ -319,7 +390,6 @@ function buscarProdutosPorCliente(notas, codCliente, meses = 6) {
     const cliente = nota.cliente || {}
     if (String(cliente.codigo || '').trim() !== String(codCliente).trim()) continue
     const dataNota = nota.data || nota.emissao || nota.dataEmissao || ''
-    // Filtra pelo período (últimos N meses)
     if (dataNota && dataNota < corteStr) continue
     for (const p of nota.produtos || []) {
       if (!p || !p.codigo) continue
@@ -328,6 +398,10 @@ function buscarProdutosPorCliente(notas, codCliente, meses = 6) {
           codigo: p.codigo,
           descricao: p.descricao || '',
           unidade: p.unidade || '',
+          // ===== NOVO: dados da nota =====
+          marca: p.marca || '',
+          lote: p.lote || '',
+          validade: p.validade || '',
           quantidade: 0,
           valor: 0,
           numNotas: 0,
@@ -340,9 +414,14 @@ function buscarProdutosPorCliente(notas, codCliente, meses = 6) {
       item.valor += Number(p.valor_total) || 0
       item.numNotas += 1
       if (dataNota && dataNota > item.ultimaData) item.ultimaData = dataNota
+      // ===== NOVO: marca/lote/validade da nota mais recente =====
+      if (dataNota && dataNota >= item.ultimaData) {
+        if (p.marca) item.marca = p.marca
+        if (p.lote) item.lote = p.lote
+        if (p.validade) item.validade = p.validade
+      }
     }
   }
-  // Ordena por valor (mais comprados primeiro)
   lista.sort((a, b) => b.valor - a.valor)
   return lista
 }
@@ -465,6 +544,9 @@ handleUnico('ia:consultar', async (_e, payload) => {
     '- Se a pergunta menciona um produto que NÃO aparece nos dados, diga claramente que não encontrou compras desse produto nas notas.\n' +
     '- Se faltar informação (ex.: data das notas), diga o que falta de forma transparente.\n' +
     '- Termine SEMPRE com uma sugestão de ação prática (ligar, visitar, enviar proposta, oferta).\n' +
+	'- Quando os dados trouxerem MARCA, LOTE e VALIDADE do produto, use-os para dar precisão (ex.: "consome AGULHA 25X7 marca VACUPLAST").\n' +
+    '- Se a VALIDADE do produto estiver próxima (menos de 6 meses da data atual) ou vencida, sinalize como alerta de risco de vencimento.\n' +
+    '- NUNCA invente marca, lote ou validade: só informe quando vierem nos dados das notas.\n' +
     // ===== INTELIGÊNCIA BIOMÉDICA E CROSS-SELLING =====
     'INTELIGÊNCIA DE VENDAS (cross-selling):\n' +
     '- Quando a pergunta envolve um produto, analise as notas para identificar OUTROS produtos que os MESMOS clientes costumam comprar juntos (correlação real de compras).\n' +
@@ -985,15 +1067,20 @@ handleUnico('clientes:comprasNotas', (_e, clienteId) => {
   const codigo = String(cli.codigo || '').trim()
   if (!codigo) return { ok: true, itens: [] }
   const itens = []
-  // 'notas' é a mesma variável usada no ia:consultar — adapte o nome se for diferente
-  for (const nota of notas || []) {
+  const notasRes = carregarNotas()
+  const notas = notasRes.ok ? (notasRes.dados.notas || []) : []
+  for (const nota of notas) {
     const codNota = String((nota.cliente && nota.cliente.codigo) || '').trim()
     if (!codNota || codNota !== codigo) continue
     for (const prod of nota.itens || nota.produtos || []) {
       itens.push({
         descricao: prod.descricao || prod.nome || prod.produto || '',
         quantidade: Number(prod.quantidade || prod.qtd || 0),
-        valor: Number(prod.valor || prod.total || 0),
+        valor: Number(prod.valor_unitario || prod.valor || prod.total || 0),
+        // ===== NOVO: dados da nota =====
+        marca: prod.marca || '',
+        lote: prod.lote || '',
+        validade: prod.validade || '',
         data: nota.data || nota.emissao || ''
       })
     }
@@ -1524,4 +1611,508 @@ app.whenReady().then(() => {
 })
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+// ===== MÓDULO ADICIONADO: PRODUTOS / COMPARATIVO / COTAÇÃO =====
+function limparTermoBusca(t) {
+  return String(t || '').replace(/[\/&#'"()\[\]{}<>|\\]/g, ' ').replace(/\s+/g, ' ').trim()
+}
+async function buscarApiVtex(termo, site) {
+  const base = ((site && site.url) || 'https://www.centerlab.com').replace(/\/$/, '').replace(/centerlab\.com\.br/g, 'centerlab.com')
+  const termoEnc = encodeURIComponent(termo)
+  const headers = {
+    'Accept': 'application/json',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+  }
+  const tentativas = [
+    base + '/api/catalog_system/pub/products/search/?_from=0&_to=19&ft=' + termoEnc,
+    base + '/api/catalog_system/pub/products/search/' + termoEnc + '?map=ft&_from=0&_to=19'
+  ]
+  for (const buscaUrl of tentativas) {
+    try {
+      console.log('[COTA-API] tentando =', buscaUrl)
+      const res = await fetch(buscaUrl, { signal: AbortSignal.timeout(20000), headers })
+      console.log('[COTA-API] status =', res.status)
+      if (res.status === 429) throw new Error('limite de requisições (429)')
+      if (res.status === 404 || res.status === 403 || !res.ok) continue
+      const dados = await res.json()
+      const arr = Array.isArray(dados) ? dados : (dados && dados.data) || []
+      console.log('[COTA-API] retornou =', arr.length, 'produtos')
+      return arr
+    } catch (e) {
+      if (e && e.name === 'AbortError') throw new Error('tempo esgotado no site')
+      if (String((e && e.message) || '').includes('429')) throw e
+      console.log('[COTA-API] erro tentativa =', String(e && e.message || e))
+      continue
+    }
+  }
+  return []
+}
+handleUnico('produtos:listar', (_e, ano) => {
+  const res = carregarNotas()
+  if (!res.ok) return res
+  const notas = res.dados.notas || []
+  const anoFiltro = String(ano || 'total').trim()
+  const mapa = {}
+  for (const nota of notas) {
+    const dataNota = String(nota.data || nota.emissao || '')
+    if (anoFiltro !== 'total' && dataNota.slice(0, 4) !== anoFiltro) continue
+    for (const p of nota.produtos || []) {
+      if (!p || !p.codigo) continue
+      if (!mapa[p.codigo]) {
+        mapa[p.codigo] = { codigo: p.codigo, descricao: p.descricao || '', unidade: p.unidade || '', marca: p.marca || '', quantidade: 0, valor: 0, numNotas: 0, ultimaData: '' }
+      }
+      const item = mapa[p.codigo]
+      item.quantidade += Number(p.quantidade) || 0
+      item.valor += Number(p.valor_total) || 0
+      item.numNotas += 1
+      if (dataNota && dataNota >= item.ultimaData) { item.ultimaData = dataNota; if (p.marca) item.marca = p.marca }
+    }
+  }
+  const lista = Object.values(mapa).sort((a, b) => b.valor - a.valor)
+  return { ok: true, produtos: lista }
+})
+
+handleUnico('produtos:detalhe', (_e, codigoProduto, ano) => {
+  const res = carregarNotas()
+  if (!res.ok) return res
+  const notas = res.dados.notas || []
+  const chave = String(codigoProduto || '').trim()
+  const anoFiltro = String(ano || 'total').trim()
+  const MESES = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
+  const NOMES_MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+  const porMes = {}
+  MESES.forEach((m) => { porMes[m] = { valores: [], qtd: 0, numNotas: 0 } })
+  const ocorrencias = []
+  let melhorDescricao = ''
+  let unidade = ''
+
+  // ===== Limpa a marca: remove números/códigos após o nome (ex: "VACUETTE 5102" -> "VACUETTE") =====
+  const limparMarca = (m) => String(m || '').replace(/\s+\d[\d\s.\/()-]*$/, '').trim()
+
+  const dadosPerfil = dadosParaPerfil()
+  const clientePorCodigo = {}
+  for (const cliCad of (dadosPerfil.clientes || [])) {
+    if (cliCad && cliCad.codigo != null && String(cliCad.codigo).trim() !== '') {
+      clientePorCodigo[String(cliCad.codigo).trim()] = cliCad
+    }
+  }
+  for (const nota of notas) {
+    const dataNota = String(nota.data || nota.emissao || '')
+    if (!dataNota) continue
+    if (anoFiltro !== 'total' && dataNota.slice(0, 4) !== anoFiltro) continue
+    const cliCad = clientePorCodigo[String((nota.cliente && nota.cliente.codigo) || '').trim()]
+    const clienteIdNota = cliCad ? cliCad.id : ''
+    const clienteNomeCarteira = cliCad ? cliCad.nome : (nota.cliente && nota.cliente.nome) || ''
+    for (const p of nota.produtos || []) {
+      if (!p || String(p.codigo).trim() !== chave) continue
+      const vu = Number(p.valor_unitario) || 0
+      const mes = dataNota.slice(5, 7)
+      if (porMes[mes]) {
+        porMes[mes].valores.push(vu)
+        porMes[mes].qtd += Number(p.quantidade) || 0
+        porMes[mes].numNotas += 1
+      }
+      const descItem = p.descricao || p.nome || p.produto || p.descricao_produto || ''
+      if (String(descItem).length > melhorDescricao.length) melhorDescricao = descItem
+      if (p.unidade) unidade = p.unidade
+      ocorrencias.push({
+        data: dataNota,
+        cliente: (nota.cliente && nota.cliente.nome) || '',
+        clienteCodigo: (nota.cliente && nota.cliente.codigo) || '',
+        clienteId: clienteIdNota,
+        clienteCarteira: clienteNomeCarteira,
+        numeroNota: nota.numero_nota || nota.numeroNota || '',
+        unidade: p.unidade || '',
+        quantidade: Number(p.quantidade) || 0,
+        valorUnitario: vu,
+        valorTotal: Number(p.valor_total) || 0,
+        marca: limparMarca(p.marca),
+        lote: p.lote || '',
+        validade: p.validade || ''
+      })
+    }
+  }
+  if (ocorrencias.length === 0) {
+    return { ok: false, erro: 'Produto não encontrado nas notas para o período.' }
+  }
+  const todos = ocorrencias.map((o) => o.valorUnitario).filter((v) => v > 0).sort((a, b) => a - b)
+  const mediana = todos.length ? todos[Math.floor(todos.length / 2)] : 0
+  const dentroPadrao = (v) => mediana === 0 || v <= 0 || Math.abs(v - mediana) / mediana <= 0.5
+  const serie = MESES.map((m) => {
+    const vals = porMes[m].valores.filter(dentroPadrao)
+    return {
+      mes: Number(m),
+      media: vals.length ? Math.round((vals.reduce((s, v) => s + v, 0) / vals.length) * 100) / 100 : null,
+      min: vals.length ? Math.min.apply(null, vals) : null,
+      max: vals.length ? Math.max.apply(null, vals) : null,
+      numNotas: porMes[m].numNotas,
+      qtd: porMes[m].qtd
+    }
+  })
+  const valoresOk = todos.filter(dentroPadrao)
+  const precoMedioAno = valoresOk.length
+    ? Math.round((valoresOk.reduce((s, v) => s + v, 0) / valoresOk.length) * 100) / 100
+    : null
+  const mesAtual = String(new Date().getMonth() + 1).padStart(2, '0')
+  const serieMesAtual = serie[Number(mesAtual) - 1]
+  const precoAtual = serieMesAtual && serieMesAtual.media != null ? serieMesAtual.media : precoMedioAno
+  const comMedia = serie.filter((s) => s.media != null)
+  let variacaoAno = null
+  if (comMedia.length >= 2) {
+    const primeiro = comMedia[0].media
+    const ultimo = comMedia[comMedia.length - 1].media
+    variacaoAno = primeiro > 0 ? Math.round(((ultimo - primeiro) / primeiro) * 100) : null
+  }
+  let precoMedioMes = null
+  let mesPrecoMedio = ''
+  let mesPrecoMedioRotulo = ''
+  const ocorrenciasComData = ocorrencias.filter((o) => o.data && /^\d{4}-\d{2}/.test(String(o.data)))
+  if (ocorrenciasComData.length > 0) {
+    const ordenadas = ocorrenciasComData.slice().sort((a, b) => String(b.data).localeCompare(String(a.data)))
+    const ultimoAnoMes = String(ordenadas[0].data).slice(0, 7)
+    const mesNum = parseInt(ultimoAnoMes.slice(5, 7), 10)
+    const valsMes = ordenadas
+      .filter((o) => String(o.data).slice(0, 7) === ultimoAnoMes)
+      .map((o) => o.valorUnitario)
+      .filter((v) => v > 0)
+      .filter(dentroPadrao)
+    if (valsMes.length > 0) {
+      precoMedioMes = Math.round((valsMes.reduce((s, v) => s + v, 0) / valsMes.length) * 100) / 100
+      mesPrecoMedio = String(mesNum).padStart(2, '0')
+      mesPrecoMedioRotulo = NOMES_MESES[mesNum - 1]
+    }
+  }
+  const precoReferencia = (precoMedioMes != null && precoMedioMes > 0) ? precoMedioMes : precoAtual
+  const ocorrenciasOrdenadas = ocorrencias.slice().sort((a, b) => String(b.data).localeCompare(String(a.data)))
+
+  // ===== MARCA: nota mais recente -> mais frequente -> busca pelo NOME em todo o notas.json =====
+  let marca = ''
+  for (const o of ocorrenciasOrdenadas) {
+    if (o.marca) { marca = o.marca; break }
+  }
+  if (!marca) {
+    const freq = {}
+    ocorrencias.forEach((o) => { if (o.marca) freq[o.marca] = (freq[o.marca] || 0) + 1 })
+    let maxN = 0
+    Object.keys(freq).forEach((m) => { if (freq[m] > maxN) { maxN = freq[m]; marca = m } })
+  }
+  if (!marca && melhorDescricao) {
+    const alvo = String(melhorDescricao).trim().toUpperCase()
+    for (const nota of notas) {
+      if (marca) break
+      for (const p of (nota.produtos || [])) {
+        if (!p) continue
+        const d = String(p.descricao || p.nome || p.produto || '').trim().toUpperCase()
+        if (d && (d === alvo || alvo.includes(d))) {
+          const m = String(p.marca || '').trim()
+          if (m) { marca = m; break }
+        }
+      }
+    }
+  }
+  marca = limparMarca(marca)
+
+  // ===== Concorrentes =====
+  const concRes = carregarConcorrentes()
+  let concorrentes = []
+  if (concRes.ok && concRes.dados && concRes.dados.produtos && concRes.dados.produtos[chave]) {
+    concorrentes = concRes.dados.produtos[chave]
+  }
+  concorrentes.forEach((c) => {
+    c.diferenca = precoReferencia && c.valor ? Math.round(((precoReferencia - c.valor) / c.valor) * 100) : null
+  })
+
+  return {
+    ok: true,
+    produto: {
+      codigo: chave,
+      descricao: melhorDescricao,
+      unidade: unidade,
+      marca: marca,
+      lote: (ocorrenciasOrdenadas[0] && ocorrenciasOrdenadas[0].lote) || '',
+      validade: (ocorrenciasOrdenadas[0] && ocorrenciasOrdenadas[0].validade) || '',
+      precoMedioMes: precoMedioMes,
+      mesPrecoMedio: mesPrecoMedio,
+      mesPrecoMedioRotulo: mesPrecoMedioRotulo,
+      precoAtual: precoAtual,
+      precoMedioAno: precoMedioAno,
+      variacaoAno: variacaoAno,
+      serie: serie,
+      ocorrencias: ocorrencias.slice().sort((a, b) => String(b.data).localeCompare(String(a.data))),
+      concorrentes: concorrentes.sort((a, b) => String(b.data).localeCompare(String(a.data)))
+    }
+  }
+})
+handleUnico('produtos:detalhe', (_e, codigoProduto, ano) => {
+  const res = carregarNotas()
+  if (!res.ok) return res
+  const notas = res.dados.notas || []
+  const chave = String(codigoProduto || '').trim()
+  const anoFiltro = String(ano || 'total').trim()
+  const MESES = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
+  const NOMES_MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+  const porMes = {}
+  MESES.forEach((m) => { porMes[m] = { valores: [], qtd: 0, numNotas: 0 } })
+  const ocorrencias = []
+  let melhorDescricao = ''
+  let unidade = ''
+
+  // ===== Limpa a marca: remove números/códigos após o nome (ex: "VACUETTE 5102" -> "VACUETTE") =====
+  const limparMarca = (m) => String(m || '').replace(/\s+\d[\d\s.\/()-]*$/, '').trim()
+
+  // ===== Busca a primeira ocorrência em TODO o notas.json cujo NOME (descrição) bate com o produto =====
+  const buscarMarcaPorNome = (descricaoAlvo) => {
+    const alvo = String(descricaoAlvo || '').trim().toUpperCase()
+    if (!alvo) return ''
+    for (const nota of notas) {
+      for (const p of (nota.produtos || [])) {
+        if (!p) continue
+        const d = String(p.descricao || p.nome || p.produto || p.descricao_produto || '').trim().toUpperCase()
+        if (d && (d === alvo || d.includes(alvo) || alvo.includes(d))) {
+          const m = String(p.marca || '').trim()
+          if (m) return m
+        }
+      }
+    }
+    return ''
+  }
+
+  const dadosPerfil = dadosParaPerfil()
+  const clientePorCodigo = {}
+  for (const cliCad of (dadosPerfil.clientes || [])) {
+    if (cliCad && cliCad.codigo != null && String(cliCad.codigo).trim() !== '') {
+      clientePorCodigo[String(cliCad.codigo).trim()] = cliCad
+    }
+  }
+  for (const nota of notas) {
+    const dataNota = String(nota.data || nota.emissao || '')
+    if (!dataNota) continue
+    if (anoFiltro !== 'total' && dataNota.slice(0, 4) !== anoFiltro) continue
+    const cliCad = clientePorCodigo[String((nota.cliente && nota.cliente.codigo) || '').trim()]
+    const clienteIdNota = cliCad ? cliCad.id : ''
+    const clienteNomeCarteira = cliCad ? cliCad.nome : (nota.cliente && nota.cliente.nome) || ''
+    for (const p of nota.produtos || []) {
+      if (!p || String(p.codigo).trim() !== chave) continue
+      const vu = Number(p.valor_unitario) || 0
+      const mes = dataNota.slice(5, 7)
+      if (porMes[mes]) {
+        porMes[mes].valores.push(vu)
+        porMes[mes].qtd += Number(p.quantidade) || 0
+        porMes[mes].numNotas += 1
+      }
+      const descItem = p.descricao || p.nome || p.produto || p.descricao_produto || ''
+      if (String(descItem).length > melhorDescricao.length) melhorDescricao = descItem
+      if (p.unidade) unidade = p.unidade
+      ocorrencias.push({
+        data: dataNota,
+        cliente: (nota.cliente && nota.cliente.nome) || '',
+        clienteCodigo: (nota.cliente && nota.cliente.codigo) || '',
+        clienteId: clienteIdNota,
+        clienteCarteira: clienteNomeCarteira,
+        numeroNota: nota.numero_nota || nota.numeroNota || '',
+        unidade: p.unidade || '',
+        quantidade: Number(p.quantidade) || 0,
+        valorUnitario: vu,
+        valorTotal: Number(p.valor_total) || 0,
+        marca: limparMarca(p.marca),
+        lote: p.lote || '',
+        validade: p.validade || ''
+      })
+    }
+  }
+  if (ocorrencias.length === 0) {
+    return { ok: false, erro: 'Produto não encontrado nas notas para o período.' }
+  }
+  const todos = ocorrencias.map((o) => o.valorUnitario).filter((v) => v > 0).sort((a, b) => a - b)
+  const mediana = todos.length ? todos[Math.floor(todos.length / 2)] : 0
+  const dentroPadrao = (v) => mediana === 0 || v <= 0 || Math.abs(v - mediana) / mediana <= 0.5
+  const serie = MESES.map((m) => {
+    const vals = porMes[m].valores.filter(dentroPadrao)
+    return {
+      mes: Number(m),
+      media: vals.length ? Math.round((vals.reduce((s, v) => s + v, 0) / vals.length) * 100) / 100 : null,
+      min: vals.length ? Math.min.apply(null, vals) : null,
+      max: vals.length ? Math.max.apply(null, vals) : null,
+      numNotas: porMes[m].numNotas,
+      qtd: porMes[m].qtd
+    }
+  })
+  const valoresOk = todos.filter(dentroPadrao)
+  const precoMedioAno = valoresOk.length
+    ? Math.round((valoresOk.reduce((s, v) => s + v, 0) / valoresOk.length) * 100) / 100
+    : null
+  const mesAtual = String(new Date().getMonth() + 1).padStart(2, '0')
+  const serieMesAtual = serie[Number(mesAtual) - 1]
+  const precoAtual = serieMesAtual && serieMesAtual.media != null ? serieMesAtual.media : precoMedioAno
+  const comMedia = serie.filter((s) => s.media != null)
+  let variacaoAno = null
+  if (comMedia.length >= 2) {
+    const primeiro = comMedia[0].media
+    const ultimo = comMedia[comMedia.length - 1].media
+    variacaoAno = primeiro > 0 ? Math.round(((ultimo - primeiro) / primeiro) * 100) : null
+  }
+  let precoMedioMes = null
+  let mesPrecoMedio = ''
+  let mesPrecoMedioRotulo = ''
+  const ocorrenciasComData = ocorrencias.filter((o) => o.data && /^\d{4}-\d{2}/.test(String(o.data)))
+  if (ocorrenciasComData.length > 0) {
+    const ordenadas = ocorrenciasComData.slice().sort((a, b) => String(b.data).localeCompare(String(a.data)))
+    const ultimoAnoMes = String(ordenadas[0].data).slice(0, 7)
+    const mesNum = parseInt(ultimoAnoMes.slice(5, 7), 10)
+    const valsMes = ordenadas
+      .filter((o) => String(o.data).slice(0, 7) === ultimoAnoMes)
+      .map((o) => o.valorUnitario)
+      .filter((v) => v > 0)
+      .filter(dentroPadrao)
+    if (valsMes.length > 0) {
+      precoMedioMes = Math.round((valsMes.reduce((s, v) => s + v, 0) / valsMes.length) * 100) / 100
+      mesPrecoMedio = String(mesNum).padStart(2, '0')
+      mesPrecoMedioRotulo = NOMES_MESES[mesNum - 1]
+    }
+  }
+  const precoReferencia = (precoMedioMes != null && precoMedioMes > 0) ? precoMedioMes : precoAtual
+  const ocorrenciasOrdenadas = ocorrencias.slice().sort((a, b) => String(b.data).localeCompare(String(a.data)))
+
+
+    // ===== MARCA: nota mais recente -> mais frequente -> busca pelo NOME em todo o notas.json =====
+  let marca = ''
+  for (const o of ocorrenciasOrdenadas) {
+    if (o.marca) { marca = o.marca; break }
+  }
+  if (!marca) {
+    const freq = {}
+    ocorrencias.forEach((o) => { if (o.marca) freq[o.marca] = (freq[o.marca] || 0) + 1 })
+    let maxN = 0
+    Object.keys(freq).forEach((m) => { if (freq[m] > maxN) { maxN = freq[m]; marca = m } })
+  }
+  // ===== FALLBACK FINAL: busca pelo NOME (descrição) em TODAS as notas =====
+  if (!marca && melhorDescricao) {
+    const alvo = String(melhorDescricao).trim().toUpperCase()
+    for (const nota of notas) {
+      if (marca) break
+      for (const p of (nota.produtos || [])) {
+        if (!p) continue
+        const d = String(p.descricao || p.nome || p.produto || '').trim().toUpperCase()
+        if (d && (d === alvo || alvo.includes(d))) {
+          const m = String(p.marca || '').trim()
+          if (m) { marca = m; break }
+        }
+      }
+    }
+  }
+  // ===== Limpa números após a marca (ex: "VACUETTE 5102" -> "VACUETTE") =====
+  marca = String(marca || '').replace(/\s+\d[\d\s.\/()-]*$/, '').trim()
+  console.log('[produto-detalhe] codigo=' + chave + ' descricao="' + melhorDescricao + '" -> marca="' + marca + '"')
+  
+  let concorrentes = []
+  if (concRes.ok && concRes.dados && concRes.dados.produtos && concRes.dados.produtos[chave]) {
+    concorrentes = concRes.dados.produtos[chave]
+  }
+  concorrentes.forEach((c) => {
+    c.diferenca = precoReferencia && c.valor ? Math.round(((precoReferencia - c.valor) / c.valor) * 100) : null
+  })
+  return {
+    ok: true,
+    produto: {
+      codigo: chave,
+      descricao: melhorDescricao,
+      unidade: unidade,
+      marca: marca,
+      lote: (ocorrenciasOrdenadas[0] && ocorrenciasOrdenadas[0].lote) || '',
+      validade: (ocorrenciasOrdenadas[0] && ocorrenciasOrdenadas[0].validade) || '',
+      precoMedioMes: precoMedioMes,
+      mesPrecoMedio: mesPrecoMedio,
+      mesPrecoMedioRotulo: mesPrecoMedioRotulo,
+      precoAtual: precoAtual,
+      precoMedioAno: precoMedioAno,
+      variacaoAno: variacaoAno,
+      serie: serie,
+      ocorrencias: ocorrencias.slice().sort((a, b) => String(b.data).localeCompare(String(a.data))),
+      concorrentes: concorrentes.sort((a, b) => String(b.data).localeCompare(String(a.data)))
+    }
+  }
+})
+handleUnico('concorrentes:salvar', (_e, payload) => {
+  if (!sessao) return { ok: false, erro: 'Não autenticado' }
+  return adicionarConcorrente(payload ? Object.assign({}, payload, { usuario: sessao.nome }) : {})
+})
+handleUnico('concorrentes:deletar', (_e, codigo, id) => {
+  if (!sessao) return { ok: false, erro: 'Não autenticado' }
+  return removerConcorrente(codigo, id)
+})
+handleUnico('sitescota:listar', () => carregarSitesCota())
+handleUnico('sitescota:salvar', (_e, sites) => {
+  if (!sessao) return { ok: false, erro: 'Não autenticado' }
+  return salvarSitesCota(sites)
+})
+function montarUrlBuscaSite(site, termo) {
+  const base = ((site && site.url) || 'https://www.centerlab.com').replace(/\/$/, '')
+  const slug = encodeURIComponent(termo.toLowerCase())
+  const q = encodeURIComponent(termo.toUpperCase())
+  return base + '/' + slug + '?_q=' + q + '&map=ft'
+}
+
+// ===== Reduz o termo para a busca VTEX (descrição completa não retorna nada) =====
+function montarTermoBusca(termo) {
+  let t = String(termo || '').toLowerCase()
+  t = t.replace(/\([^)]*\)/g, ' ')            // remove (450263)
+  t = t.replace(/\b\d+(?:[.,]\d+)*\b/g, ' ')  // remove números (450263, 5,0)
+  t = t.replace(/[%]/g, ' ')                  // remove %
+  t = t.replace(/\bc\/?\d+\b/g, ' ')          // remove c/100
+  t = t.replace(/\bcx\/?\d+\b/g, ' ')         // remove cx/50
+  t = t.replace(/[\/\\]/g, ' ')               // remove / e \
+  t = t.replace(/[^\w\s-]/g, ' ')             // remove pontuação restante
+  t = t.replace(/\s+/g, ' ').trim()
+  const pal = t.split(' ').filter(Boolean)
+  if (!pal.length) return t
+  let nucleo
+  if (pal.length > 5) {
+    const p3 = pal.slice(0, 3)
+    const ult = pal[pal.length - 1]
+    nucleo = p3.includes(ult) ? p3 : p3.concat(ult) // mantém a marca no final
+  } else {
+    nucleo = pal.slice(0, 4)
+  }
+  return nucleo.join(' ')
+}
+
+handleUnico('cotacoes:buscar', async (_e, payload) => {
+  const bruto = typeof payload === 'string' ? payload : (payload && payload.termo) || ''
+  const termoOriginal = limparTermoBusca(bruto)
+  if (!termoOriginal) return { ok: false, erro: 'Digite um termo de busca.' }
+  // ===== Busca SOMENTE na Centerlab =====
+  const termo = montarTermoBusca(termoOriginal)
+  const site = { nome: 'Centerlab', url: 'https://www.centerlab.com' }
+  const avisos = []
+  const porSite = []
+  try {
+    const produtos = await buscarApiVtex(termo, site)
+    const base = 'https://www.centerlab.com'
+    const linkBusca = base + '/' + encodeURIComponent(termo) + '?_q=' + encodeURIComponent(termo.toUpperCase()) + '&map=ft'
+    const resultados = (Array.isArray(produtos) ? produtos : []).map((p) => {
+      const preco = p.items && p.items[0] && p.items[0].sellers && p.items[0].sellers[0] && p.items[0].sellers[0].commertialOffer ? p.items[0].sellers[0].commertialOffer.Price : null
+      const unidade = p.items && p.items[0] ? (p.items[0].unitMultiplier || 1) : 1
+      const precoUnitario = (preco != null) ? Math.round((preco / unidade) * 100) / 100 : null
+      return {
+        titulo: p.productName || p.name || '',
+        marca: p.brand || '',
+        preco,
+        precoUnitario,
+        embalagem: unidade > 1 ? (unidade + ' un') : '',
+        unidade,
+        link: linkBusca
+      }
+    }).filter((r) => r.preco != null && r.preco > 0)
+    if (resultados.length > 0) porSite.push({ site: 'Centerlab', resultados })
+    else avisos.push('Centerlab: nenhum resultado com preço para "' + termo + '".')
+  } catch (err) {
+    avisos.push('Centerlab: ' + String(err.message || err))
+  }
+  return { ok: true, porSite, avisos }
+})
+
+handleUnico('externo:abrir', (_e, url) => {
+  if (url && /^https?:\/\//.test(url)) shell.openExternal(url)
+  return { ok: true }
 })

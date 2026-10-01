@@ -9,6 +9,8 @@ import PainelGerente from './components/PainelGerente'
 import GestaoVendedores from './components/GestaoVendedores'
 import Insights from './components/Insights'
 import Consultar from './components/Consultar'
+import Produtos from './components/Produtos'
+
 // ===== NOVO: modal de resumo mensal (aparece 1x por mês) =====
 function ResumoMensal({ usuario, onFechar }) {
   const [resumo, setResumo] = useState(null)
@@ -142,6 +144,7 @@ function App() {
         { id: 'vendas', label: 'Vendas' },
         { id: 'orcamentos', label: 'Orçamentos' },
         { id: 'consultar', label: '🔍 Consultar' },
+		{ id: 'produtos', label: '📦 Produtos' },
         { id: 'insights', label: '💡 Dicas' },
       ]
     : [
@@ -152,6 +155,7 @@ function App() {
         { id: 'orcamentos', label: 'Orçamentos' },
         { id: 'dashboard', label: '📊 Análise' },
         { id: 'consultar', label: '🔍 Consultar' },
+		{ id: 'produtos', label: '📦 Produtos' },
         { id: 'insights', label: '💡 Dicas' },
       ]
   async function salvarCaminho(e) {
@@ -240,6 +244,7 @@ function App() {
         {aba === 'orcamentos' && <Orcamentos usuario={usuario} />}
         {aba === 'dashboard' && <Dashboard usuario={usuario} />}
         {aba === 'consultar' && <Consultar usuario={usuario} />}
+		{aba === 'produtos' && <Produtos />}
         {aba === 'insights' && <Insights usuario={usuario} />}
       </main>
     </div>

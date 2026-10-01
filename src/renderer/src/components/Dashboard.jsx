@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fmtValor, fmtPct, MESES_NOME as MESES, parseData, semanaAtualRange } from '../utils/format'
-import { valorFreteDe, valorPedido } from '../utils/financeiro'
+import { valorFreteDe } from '../utils/financeiro'
 const MULT = { mes: 1, trimestre: 3, ano: 12 }
+// ===== VALOR DO PEDIDO — MESMA BASE DOS CARDS (insumos + equipamentos, SEM frete) =====
+const valorTotalPedido = (v) => Number(v.valorInsumos || 0) + Number(v.valorEquipamento || 0)
 // ===== Calcula o período anterior equivalente (para variação) =====
 function periodoAnterior(tipoPeriodo, mes, trimestre, ano) {
   if (tipoPeriodo === 'mes') {
@@ -108,11 +110,13 @@ function Dashboard({ usuario }) {
     }
     return { insumos, equipamentos, total: insumos + equipamentos, pedInsumos, pedEquipamentos, freteTotal, numVendas: vendasFiltradas.length }
   }, [vendasFiltradas])
+  // ===== ALTERADO: mesma base dos cards (sem frete) =====
   const totalAnterior = useMemo(() => {
-    return vendasAnteriores.reduce((soma, v) => soma + valorPedido(v), 0)
+    return vendasAnteriores.reduce((soma, v) => soma + valorTotalPedido(v), 0)
   }, [vendasAnteriores])
+  // ===== ALTERADO: mesma base dos cards (sem frete) =====
   const totalSemana = useMemo(() => {
-    return vendasSemana.reduce((soma, v) => soma + valorPedido(v), 0)
+    return vendasSemana.reduce((soma, v) => soma + valorTotalPedido(v), 0)
   }, [vendasSemana])
   // ===== ALTERADO: ranking sem frete (insumos + equipamentos) =====
   const ranking = useMemo(() => {
@@ -131,20 +135,21 @@ function Dashboard({ usuario }) {
   }, [vendasFiltradas])
   const orcamentosAguardando = useMemo(() => {
     const lista = (orcamentos || []).filter((o) => o.status === 'aguardando')
-    const valor = lista.reduce((soma, o) => soma + valorPedido(o), 0)
+    const valor = lista.reduce((soma, o) => soma + valorTotalPedido(o), 0)
     return { qtd: lista.length, valor }
   }, [orcamentos])
+  // ===== ALTERADO: barras usam a MESMA base dos cards (sem frete) e o MESMO limite =====
   const vendasPorMes = useMemo(() => {
     const arr = Array(12).fill(0)
     for (const v of vendas) {
       const m = parseData(v.data)
-      if (m && m.getFullYear() === ano) {
-        arr[m.getMonth()] += valorPedido(v)
+      if (m && m.getFullYear() === ano && (!limite || m <= limite)) {
+        arr[m.getMonth()] += valorTotalPedido(v)
       }
     }
     const max = Math.max(...arr, 1)
     return arr.map((val, i) => ({ mes: MESES[i], valor: val, pct: (val / max) * 100 }))
-  }, [vendas, ano])
+  }, [vendas, ano, limite])
   const metaAtual = tipoMeta === 'semanal' ? META_SEMANAL : META_MENSAL
   const valorAtual = tipoMeta === 'semanal' ? totalSemana : totais.total
   const metaAlvo =
