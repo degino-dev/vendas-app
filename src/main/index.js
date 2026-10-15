@@ -1322,20 +1322,50 @@ handleUnico('janela:focar', (evento) => {
 // --- Cidades (IBGE) ---
 let cacheCidades = null
 handleUnico('cidades:listar', async () => {
-  if (cacheCidades) return cacheCidades
-  try {
-    const res = await fetch('https://servicodados.ibge.gov.br/api/v1/localidades/municipios')
-    if (!res.ok) throw new Error('IBGE indisponível')
-    const lista = await res.json()
-    cacheCidades = lista.map((m) => ({
-      nome: m.nome,
-      uf: (m.microrregiao && m.microrregiao.mesorregiao && m.microrregiao.mesorregiao.UF && m.microrregiao.mesorregiao.UF.sigla) || ''
-    }))
-    return cacheCidades
-  } catch (err) {
-    console.error('Erro ao buscar cidades:', err)
+  if (cacheCidades && cacheCidades.length > 0) return cacheCidades
+
+  // Lista enxuta: só nome + UF (resposta ~10x menor, evita corte no download)
+  const URLS = [
+    'https://servicodados.ibge.gov.br/api/v1/localidades/municipios?campos=nome,microrregiao.mesorregiao.UF.sigla',
+    'https://servicodados.ibge.gov.br/api/v1/localidades/municipios'
+  ]
+
+  const { net } = require('electron')
+  let lista = null
+
+  for (const url of URLS) {
+    try {
+      const res = await net.fetch(url, { signal: AbortSignal.timeout(30000) })
+      console.log('[CIDADES] status =', res.status, '| url =', url.slice(0, 80))
+      if (!res.ok) continue
+      const texto = await res.text()
+      console.log('[CIDADES] tamanho da resposta =', texto.length, 'chars')
+      try {
+        lista = JSON.parse(texto)
+        break // sucesso, sai do loop
+      } catch (eParse) {
+        console.log('[CIDADES] JSON cortado/inválido, tentando próxima URL =', String(eParse && eParse.message || eParse))
+      }
+    } catch (e) {
+      console.log('[CIDADES] falha na requisição =', String(e && e.message || e))
+    }
+  }
+
+  if (!lista || !Array.isArray(lista)) {
+    console.log('[CIDADES] não foi possível obter a lista do IBGE')
     return []
   }
+  console.log('[CIDADES] municípios recebidos =', lista.length)
+
+  cacheCidades = lista.map((m) => {
+    let uf = ''
+    if (m.microrregiao && m.microrregiao.mesorregiao && m.microrregiao.mesorregiao.UF) {
+      uf = m.microrregiao.mesorregiao.UF.sigla || ''
+    }
+    return { nome: m.nome, uf }
+  })
+  console.log('[CIDADES] total mapeado =', cacheCidades.length, '| com UF =', cacheCidades.filter((c) => c.uf).length)
+  return cacheCidades
 })
 // --- Consulta CNPJ (com fallback de 3 APIs) ---
 handleUnico('cnpj:consultar', async (_e, cnpj) => {
@@ -1844,195 +1874,7 @@ handleUnico('produtos:detalhe', (_e, codigoProduto, ano) => {
     }
   }
 })
-handleUnico('produtos:detalhe', (_e, codigoProduto, ano) => {
-  const res = carregarNotas()
-  if (!res.ok) return res
-  const notas = res.dados.notas || []
-  const chave = String(codigoProduto || '').trim()
-  const anoFiltro = String(ano || 'total').trim()
-  const MESES = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
-  const NOMES_MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
-  const porMes = {}
-  MESES.forEach((m) => { porMes[m] = { valores: [], qtd: 0, numNotas: 0 } })
-  const ocorrencias = []
-  let melhorDescricao = ''
-  let unidade = ''
 
-  // ===== Limpa a marca: remove números/códigos após o nome (ex: "VACUETTE 5102" -> "VACUETTE") =====
-  const limparMarca = (m) => String(m || '').replace(/\s+\d[\d\s.\/()-]*$/, '').trim()
-
-  // ===== Busca a primeira ocorrência em TODO o notas.json cujo NOME (descrição) bate com o produto =====
-  const buscarMarcaPorNome = (descricaoAlvo) => {
-    const alvo = String(descricaoAlvo || '').trim().toUpperCase()
-    if (!alvo) return ''
-    for (const nota of notas) {
-      for (const p of (nota.produtos || [])) {
-        if (!p) continue
-        const d = String(p.descricao || p.nome || p.produto || p.descricao_produto || '').trim().toUpperCase()
-        if (d && (d === alvo || d.includes(alvo) || alvo.includes(d))) {
-          const m = String(p.marca || '').trim()
-          if (m) return m
-        }
-      }
-    }
-    return ''
-  }
-
-  const dadosPerfil = dadosParaPerfil()
-  const clientePorCodigo = {}
-  for (const cliCad of (dadosPerfil.clientes || [])) {
-    if (cliCad && cliCad.codigo != null && String(cliCad.codigo).trim() !== '') {
-      clientePorCodigo[String(cliCad.codigo).trim()] = cliCad
-    }
-  }
-  for (const nota of notas) {
-    const dataNota = String(nota.data || nota.emissao || '')
-    if (!dataNota) continue
-    if (anoFiltro !== 'total' && dataNota.slice(0, 4) !== anoFiltro) continue
-    const cliCad = clientePorCodigo[String((nota.cliente && nota.cliente.codigo) || '').trim()]
-    const clienteIdNota = cliCad ? cliCad.id : ''
-    const clienteNomeCarteira = cliCad ? cliCad.nome : (nota.cliente && nota.cliente.nome) || ''
-    for (const p of nota.produtos || []) {
-      if (!p || String(p.codigo).trim() !== chave) continue
-      const vu = Number(p.valor_unitario) || 0
-      const mes = dataNota.slice(5, 7)
-      if (porMes[mes]) {
-        porMes[mes].valores.push(vu)
-        porMes[mes].qtd += Number(p.quantidade) || 0
-        porMes[mes].numNotas += 1
-      }
-      const descItem = p.descricao || p.nome || p.produto || p.descricao_produto || ''
-      if (String(descItem).length > melhorDescricao.length) melhorDescricao = descItem
-      if (p.unidade) unidade = p.unidade
-      ocorrencias.push({
-        data: dataNota,
-        cliente: (nota.cliente && nota.cliente.nome) || '',
-        clienteCodigo: (nota.cliente && nota.cliente.codigo) || '',
-        clienteId: clienteIdNota,
-        clienteCarteira: clienteNomeCarteira,
-        numeroNota: nota.numero_nota || nota.numeroNota || '',
-        unidade: p.unidade || '',
-        quantidade: Number(p.quantidade) || 0,
-        valorUnitario: vu,
-        valorTotal: Number(p.valor_total) || 0,
-        marca: limparMarca(p.marca),
-        lote: p.lote || '',
-        validade: p.validade || ''
-      })
-    }
-  }
-  if (ocorrencias.length === 0) {
-    return { ok: false, erro: 'Produto não encontrado nas notas para o período.' }
-  }
-  const todos = ocorrencias.map((o) => o.valorUnitario).filter((v) => v > 0).sort((a, b) => a - b)
-  const mediana = todos.length ? todos[Math.floor(todos.length / 2)] : 0
-  const dentroPadrao = (v) => mediana === 0 || v <= 0 || Math.abs(v - mediana) / mediana <= 0.5
-  const serie = MESES.map((m) => {
-    const vals = porMes[m].valores.filter(dentroPadrao)
-    return {
-      mes: Number(m),
-      media: vals.length ? Math.round((vals.reduce((s, v) => s + v, 0) / vals.length) * 100) / 100 : null,
-      min: vals.length ? Math.min.apply(null, vals) : null,
-      max: vals.length ? Math.max.apply(null, vals) : null,
-      numNotas: porMes[m].numNotas,
-      qtd: porMes[m].qtd
-    }
-  })
-  const valoresOk = todos.filter(dentroPadrao)
-  const precoMedioAno = valoresOk.length
-    ? Math.round((valoresOk.reduce((s, v) => s + v, 0) / valoresOk.length) * 100) / 100
-    : null
-  const mesAtual = String(new Date().getMonth() + 1).padStart(2, '0')
-  const serieMesAtual = serie[Number(mesAtual) - 1]
-  const precoAtual = serieMesAtual && serieMesAtual.media != null ? serieMesAtual.media : precoMedioAno
-  const comMedia = serie.filter((s) => s.media != null)
-  let variacaoAno = null
-  if (comMedia.length >= 2) {
-    const primeiro = comMedia[0].media
-    const ultimo = comMedia[comMedia.length - 1].media
-    variacaoAno = primeiro > 0 ? Math.round(((ultimo - primeiro) / primeiro) * 100) : null
-  }
-  let precoMedioMes = null
-  let mesPrecoMedio = ''
-  let mesPrecoMedioRotulo = ''
-  const ocorrenciasComData = ocorrencias.filter((o) => o.data && /^\d{4}-\d{2}/.test(String(o.data)))
-  if (ocorrenciasComData.length > 0) {
-    const ordenadas = ocorrenciasComData.slice().sort((a, b) => String(b.data).localeCompare(String(a.data)))
-    const ultimoAnoMes = String(ordenadas[0].data).slice(0, 7)
-    const mesNum = parseInt(ultimoAnoMes.slice(5, 7), 10)
-    const valsMes = ordenadas
-      .filter((o) => String(o.data).slice(0, 7) === ultimoAnoMes)
-      .map((o) => o.valorUnitario)
-      .filter((v) => v > 0)
-      .filter(dentroPadrao)
-    if (valsMes.length > 0) {
-      precoMedioMes = Math.round((valsMes.reduce((s, v) => s + v, 0) / valsMes.length) * 100) / 100
-      mesPrecoMedio = String(mesNum).padStart(2, '0')
-      mesPrecoMedioRotulo = NOMES_MESES[mesNum - 1]
-    }
-  }
-  const precoReferencia = (precoMedioMes != null && precoMedioMes > 0) ? precoMedioMes : precoAtual
-  const ocorrenciasOrdenadas = ocorrencias.slice().sort((a, b) => String(b.data).localeCompare(String(a.data)))
-
-
-    // ===== MARCA: nota mais recente -> mais frequente -> busca pelo NOME em todo o notas.json =====
-  let marca = ''
-  for (const o of ocorrenciasOrdenadas) {
-    if (o.marca) { marca = o.marca; break }
-  }
-  if (!marca) {
-    const freq = {}
-    ocorrencias.forEach((o) => { if (o.marca) freq[o.marca] = (freq[o.marca] || 0) + 1 })
-    let maxN = 0
-    Object.keys(freq).forEach((m) => { if (freq[m] > maxN) { maxN = freq[m]; marca = m } })
-  }
-  // ===== FALLBACK FINAL: busca pelo NOME (descrição) em TODAS as notas =====
-  if (!marca && melhorDescricao) {
-    const alvo = String(melhorDescricao).trim().toUpperCase()
-    for (const nota of notas) {
-      if (marca) break
-      for (const p of (nota.produtos || [])) {
-        if (!p) continue
-        const d = String(p.descricao || p.nome || p.produto || '').trim().toUpperCase()
-        if (d && (d === alvo || alvo.includes(d))) {
-          const m = String(p.marca || '').trim()
-          if (m) { marca = m; break }
-        }
-      }
-    }
-  }
-  // ===== Limpa números após a marca (ex: "VACUETTE 5102" -> "VACUETTE") =====
-  marca = String(marca || '').replace(/\s+\d[\d\s.\/()-]*$/, '').trim()
-  console.log('[produto-detalhe] codigo=' + chave + ' descricao="' + melhorDescricao + '" -> marca="' + marca + '"')
-  
-  let concorrentes = []
-  if (concRes.ok && concRes.dados && concRes.dados.produtos && concRes.dados.produtos[chave]) {
-    concorrentes = concRes.dados.produtos[chave]
-  }
-  concorrentes.forEach((c) => {
-    c.diferenca = precoReferencia && c.valor ? Math.round(((precoReferencia - c.valor) / c.valor) * 100) : null
-  })
-  return {
-    ok: true,
-    produto: {
-      codigo: chave,
-      descricao: melhorDescricao,
-      unidade: unidade,
-      marca: marca,
-      lote: (ocorrenciasOrdenadas[0] && ocorrenciasOrdenadas[0].lote) || '',
-      validade: (ocorrenciasOrdenadas[0] && ocorrenciasOrdenadas[0].validade) || '',
-      precoMedioMes: precoMedioMes,
-      mesPrecoMedio: mesPrecoMedio,
-      mesPrecoMedioRotulo: mesPrecoMedioRotulo,
-      precoAtual: precoAtual,
-      precoMedioAno: precoMedioAno,
-      variacaoAno: variacaoAno,
-      serie: serie,
-      ocorrencias: ocorrencias.slice().sort((a, b) => String(b.data).localeCompare(String(a.data))),
-      concorrentes: concorrentes.sort((a, b) => String(b.data).localeCompare(String(a.data)))
-    }
-  }
-})
 handleUnico('concorrentes:salvar', (_e, payload) => {
   if (!sessao) return { ok: false, erro: 'Não autenticado' }
   return adicionarConcorrente(payload ? Object.assign({}, payload, { usuario: sessao.nome }) : {})
